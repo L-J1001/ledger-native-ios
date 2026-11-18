@@ -16,9 +16,7 @@
 
 ## 构建说明
 
-当前本机是 Windows，没有 Xcode，不能在本机编译出 IPA。已用 GitHub Actions 的 macOS 15 Intel runner 实际构建成功，产物为未签名 `LedgerNative-unsigned.ipa`。
-
-重新构建：
+当前本机是 Windows，没有 Xcode，不能在本机编译出 IPA。已提供 GitHub Actions 的 macOS 构建链：
 
 1. 新建一个 GitHub 仓库（建议 Private，只自己用）。
 2. 把本目录 `ios-native` 的内容作为仓库根目录推送。

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CryptoKit
 
 @MainActor
 final class LedgerStore: ObservableObject {
@@ -10,24 +11,19 @@ final class LedgerStore: ObservableObject {
     @Published private(set) var isSyncing = false
     @Published private(set) var lastError: String?
     @Published private(set) var lastSyncAt: Date?
-
-    @Published var customMembers: [String] = []
-    @Published var customCategories: [String] = []
-    @Published var customAccounts: [String] = []
-    @Published var monthlyBudgetCents: Int = 0
+    /// 每本账本自己的成员 / 分类 / 账户；不会跨账本串。
+    @Published private(set) var taxonomies: [String: BookTaxonomy] = [:]
+    /// 每本账本的月预算（分）；0 表示未设置。
+    @Published private(set) var budgets: [String: Int] = [:]
+    /// 本机回收站；删除先进这里，可还原，彻底删除才移除。
+    @Published private(set) var trash: [LedgerRecord] = []
 
     private let persistence = Persistence()
     private let sync = SyncService.shared
-    private let defaults = UserDefaults.standard
     private var cursor: Int64 = 0
     private var selectedBookID: String?
     private var deviceID: String = ""
     private var token: String?
-
-    private let membersKey = "ledger.preferences.members"
-    private let categoriesKey = "ledger.preferences.categories"
-    private let accountsKey = "ledger.preferences.accounts"
-    private let budgetKey = "ledger.preferences.budgetCents"
 
     init() {
         if let saved = persistence.load() {
@@ -39,12 +35,10 @@ final class LedgerStore: ObservableObject {
             auth = saved.auth
             deviceID = saved.deviceID
             lastSyncAt = saved.lastSyncAt
+            taxonomies = saved.taxonomies ?? [:]
+            budgets = saved.budgets ?? [:]
+            trash = saved.trash ?? []
         }
-
-        customMembers = defaults.stringArray(forKey: membersKey) ?? ["我", "家人", "共同"]
-        customCategories = defaults.stringArray(forKey: categoriesKey) ?? []
-        customAccounts = defaults.stringArray(forKey: accountsKey) ?? ["现金", "微信", "支付宝", "银行卡"]
-        monthlyBudgetCents = defaults.integer(forKey: budgetKey)
 
         if books.isEmpty {
             let defaultBook = LedgerBook(id: "book-local", name: "我的账本")
@@ -92,20 +86,47 @@ final class LedgerStore: ObservableObject {
     }
 
     var monthIncomeCents: Int {
-        monthRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+        monthRecords.filter { $0.direction == .income && !$0.excludeTotal }
+            .reduce(0) { $0 + $1.amountCents }
     }
 
     var monthExpenseCents: Int {
-        monthRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
+        monthRecords.filter { $0.direction == .expense && !$0.excludeTotal }
+            .reduce(0) { $0 + $1.amountCents }
     }
 
-    var monthBudgetRemainingCents: Int {
-        max(0, monthlyBudgetCents - monthExpenseCents)
+    var budgetCents: Int { budgets[writeBookID] ?? 0 }
+    var monthBudgetRemaining: Int { max(0, budgetCents - monthExpenseCents) }
+
+    func setBudget(_ cents: Int) {
+        budgets[writeBookID] = max(0, cents)
+        save()
     }
 
-    var monthBudgetRatio: Double {
-        guard monthlyBudgetCents > 0 else { return 0 }
-        return min(1.5, Double(monthExpenseCents) / Double(monthlyBudgetCents))
+    var trashRecords: [LedgerRecord] {
+        trash.filter { $0.bookUid == writeBookID }
+            .sorted { $0.date > $1.date }
+    }
+
+    func restore(_ record: LedgerRecord) {
+        trash.removeAll { $0.id == record.id && $0.bookUid == record.bookUid }
+        upsertLocal(record)
+        save()
+        Task { await syncNow() }
+    }
+
+    func purge(_ record: LedgerRecord) {
+        trash.removeAll { $0.id == record.id && $0.bookUid == record.bookUid }
+        deleteLocal(record)
+        save()
+        Task { await syncNow() }
+    }
+
+    func clearTrash() {
+        for record in trashRecords { deleteLocal(record) }
+        trash.removeAll { $0.bookUid == writeBookID }
+        save()
+        Task { await syncNow() }
     }
 
     var recentRecords: [LedgerRecord] {
@@ -116,32 +137,188 @@ final class LedgerStore: ObservableObject {
             }
     }
 
-    var allMembers: [String] {
-        let used = records.map { $0.member }.filter { !$0.isEmpty }
-        return Array(Set(customMembers + used + ["我"])).sorted { $0.localizedCompare($1) == .orderedAscending }
-    }
-
-    var allAccounts: [String] {
-        let used = records.map { $0.account }.filter { !$0.isEmpty }
-        return Array(Set(customAccounts + used)).sorted { $0.localizedCompare($1) == .orderedAscending }
-    }
-
-    func categories(for direction: Direction) -> [String] {
-        let used = records.filter { $0.direction == direction }.map { $0.category }.filter { !$0.isEmpty }
-        let base = direction == .expense
-            ? ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "学习", "人情", "其他"]
-            : ["工资", "兼职", "理财", "红包", "报销", "其他"]
-        let custom = customCategories
-        return Array(Set(base + custom + used)).sorted { $0.localizedCompare($1) == .orderedAscending }
-    }
-
     func records(for bookID: String) -> [LedgerRecord] {
         records.filter { $0.bookUid == bookID }.sorted { $0.date > $1.date }
     }
 
-    func records(inMonth monthKey: String, bookID: String? = nil) -> [LedgerRecord] {
-        records.filter { $0.bookUid == (bookID ?? writeBookID) && $0.monthKey == monthKey }
-            .sorted { $0.date > $1.date }
+    // MARK: - 当前账本的成员 / 分类 / 账户
+
+    private static let defaultMembers = ["我", "家人", "共同"]
+    private static let defaultExpenseCategories = ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "学习", "人情", "其他"]
+    private static let defaultIncomeCategories = ["工资", "兼职", "理财", "红包", "报销", "其他"]
+    private static let defaultAccounts = ["现金", "微信", "支付宝", "银行卡"]
+
+    private func taxonomy(for bookID: String) -> BookTaxonomy {
+        taxonomies[bookID] ?? BookTaxonomy()
+    }
+
+    func categories(for direction: Direction) -> [String] {
+        let bookID = writeBookID
+        let custom = taxonomy(for: bookID)
+        let defaults = direction == .income ? Self.defaultIncomeCategories : Self.defaultExpenseCategories
+        let used = records
+            .filter { $0.bookUid == bookID && $0.direction == direction }
+            .map(\.category)
+            .filter { !$0.isEmpty && $0 != "未分类" }
+        var seen = Set<String>()
+        return (defaults + (direction == .income ? custom.incomeCategories : custom.expenseCategories) + used)
+            .filter { seen.insert($0).inserted }
+    }
+
+    var memberOptions: [String] {
+        let bookID = writeBookID
+        let custom = taxonomy(for: bookID).members
+        let used = records.filter { $0.bookUid == bookID }.map(\.member).filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return (Self.defaultMembers + custom + used).filter { seen.insert($0).inserted }
+    }
+
+    var accountOptions: [String] {
+        let bookID = writeBookID
+        let custom = taxonomy(for: bookID).accounts
+        let used = records.filter { $0.bookUid == bookID }.map(\.account).filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return (Self.defaultAccounts + custom + used).filter { seen.insert($0).inserted }
+    }
+
+    /// 设置页/编辑器使用的统一入口；分类按收支方向区分。
+    func taxonomyValues(kind: TaxonomyKind, direction: Direction = .expense) -> [String] {
+        switch kind {
+        case .members: return memberOptions
+        case .accounts: return accountOptions
+        case .categories: return categories(for: direction)
+        }
+    }
+
+    func addTaxonomy(_ kind: TaxonomyKind, value rawValue: String,
+                     direction: Direction = .expense) {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        let bookID = writeBookID
+        var item = taxonomy(for: bookID)
+        switch kind {
+        case .members:
+            if !item.members.contains(value) { item.members.append(value) }
+        case .accounts:
+            if !item.accounts.contains(value) { item.accounts.append(value) }
+        case .categories:
+            if direction == .income {
+                if !item.incomeCategories.contains(value) { item.incomeCategories.append(value) }
+            } else {
+                if !item.expenseCategories.contains(value) { item.expenseCategories.append(value) }
+            }
+        }
+        taxonomies[bookID] = item
+        save()
+    }
+
+    func removeTaxonomy(_ kind: TaxonomyKind, value: String,
+                        direction: Direction = .expense) {
+        let bookID = writeBookID
+        var item = taxonomy(for: bookID)
+        switch kind {
+        case .members: item.members.removeAll { $0 == value }
+        case .accounts: item.accounts.removeAll { $0 == value }
+        case .categories:
+            if direction == .income { item.incomeCategories.removeAll { $0 == value } }
+            else { item.expenseCategories.removeAll { $0 == value } }
+        }
+        taxonomies[bookID] = item
+        save()
+    }
+
+    func isCustomTaxonomy(_ kind: TaxonomyKind, value: String,
+                          direction: Direction = .expense) -> Bool {
+        let item = taxonomy(for: writeBookID)
+        switch kind {
+        case .members: return item.members.contains(value)
+        case .accounts: return item.accounts.contains(value)
+        case .categories:
+            return direction == .income
+                ? item.incomeCategories.contains(value)
+                : item.expenseCategories.contains(value)
+        }
+    }
+
+    // MARK: - 拆分账目展示（与桌面一致：同一 split_group 折叠成一笔）
+
+    var recentGroups: [RecordGroup] {
+        grouped(records.filter { $0.bookUid == writeBookID })
+    }
+
+    func groups(for bookID: String) -> [RecordGroup] {
+        grouped(records.filter { $0.bookUid == bookID })
+    }
+
+    private func grouped(_ source: [LedgerRecord]) -> [RecordGroup] {
+        var order: [String] = []
+        var buckets: [String: [LedgerRecord]] = [:]
+        for record in source.sorted(by: { lhs, rhs in
+            if lhs.date == rhs.date { return lhs.updatedAt > rhs.updatedAt }
+            return lhs.date > rhs.date
+        }) {
+            let key = record.splitGroup?.isEmpty == false ? "split:\(record.splitGroup!)" : "one:\(record.id)"
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(record)
+        }
+        return order.compactMap { key in
+            guard let list = buckets[key], !list.isEmpty else { return nil }
+            return RecordGroup(id: key, records: list)
+        }
+    }
+
+    func splitRecords(group: String, bookID: String) -> [LedgerRecord] {
+        records
+            .filter { $0.bookUid == bookID && $0.splitGroup == group }
+            .sorted { $0.id < $1.id }
+    }
+
+    private static func stableBookID(_ name: String) -> String {
+        let digest = SHA256.hash(data: Data(name.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "book-" + String(hex.prefix(16))
+    }
+
+    /// 新建 / 编辑账本；期初余额和主题色与桌面 `book_upsert` 完全同口径。
+    /// 返回 nil 表示成功，否则返回错误文案。
+    func saveBook(id: String?, name rawName: String, openingCents: Int,
+                  colorHex: String) -> String? {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return "账本名称不能为空" }
+        guard openingCents >= 0 else { return "期初余额不能为负数" }
+
+        let bookID: String
+        if let id, !id.isEmpty {
+            bookID = id
+        } else {
+            bookID = Self.stableBookID(name)
+            if books.contains(where: { $0.id == bookID }) {
+                return "已有同名账本，请换个名称"
+            }
+        }
+
+        let book = LedgerBook(id: bookID, name: name,
+                              openingCents: openingCents,
+                              colorHex: colorHex.isEmpty ? "#3F7CFF" : colorHex,
+                              updatedAt: nowMillis())
+        if let index = books.firstIndex(where: { $0.id == bookID }) {
+            books[index] = book
+        } else {
+            books.append(book)
+        }
+        selectedBookID = bookID
+
+        let metaUID = "bookmeta-\(bookID)"
+        outbox.removeAll { $0.entity == "book" && $0.entityUid == metaUID }
+        outbox.append(OutboxOp(
+            id: ULID.generate(), bookUid: bookID, entity: "book",
+            entityUid: metaUID, op: "book_upsert",
+            payload: .book(name: name, openingCents: openingCents, color: colorHex),
+            updatedAt: book.updatedAt, deviceId: deviceID, splitGroup: nil
+        ))
+        save()
+        Task { await syncNow() }
+        return nil
     }
 
     func monthLabel() -> String {
@@ -156,48 +333,36 @@ final class LedgerStore: ObservableObject {
         save()
     }
 
-    func setBudget(_ cents: Int) {
-        monthlyBudgetCents = max(0, cents)
-        defaults.set(monthlyBudgetCents, forKey: budgetKey)
-    }
-
-    func addMember(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !customMembers.contains(trimmed) else { return }
-        customMembers.append(trimmed)
-        savePreferences()
-    }
-
-    func removeMember(_ value: String) {
-        customMembers.removeAll { $0 == value }
-        savePreferences()
-    }
-
-    func addCategory(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !customCategories.contains(trimmed) else { return }
-        customCategories.append(trimmed)
-        savePreferences()
-    }
-
-    func removeCategory(_ value: String) {
-        customCategories.removeAll { $0 == value }
-        savePreferences()
-    }
-
-    func addAccount(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !customAccounts.contains(trimmed) else { return }
-        customAccounts.append(trimmed)
-        savePreferences()
-    }
-
-    func removeAccount(_ value: String) {
-        customAccounts.removeAll { $0 == value }
-        savePreferences()
-    }
-
     func upsert(_ record: LedgerRecord) {
+        upsertLocal(record)
+        save()
+        Task { await syncNow() }
+    }
+
+    /// 拆分组保存：一次删旧、一次写新、只触发一次同步，避免半保存。
+    func replaceRecords(_ newRecords: [LedgerRecord], removing oldRecords: [LedgerRecord]) {
+        for old in oldRecords {
+            deleteLocal(old)
+        }
+        for record in newRecords {
+            var rec = record
+            rec.pending = true
+            upsertLocal(rec)
+        }
+        save()
+        Task { await syncNow() }
+    }
+
+    func deleteGroup(_ group: RecordGroup) {
+        for record in group.records {
+            trash.append(record)
+            deleteLocal(record)
+        }
+        save()
+        Task { await syncNow() }
+    }
+
+    private func upsertLocal(_ record: LedgerRecord) {
         var rec = record
         rec.pending = true
         if let index = records.firstIndex(where: { $0.id == rec.id && $0.bookUid == rec.bookUid }) {
@@ -206,7 +371,7 @@ final class LedgerStore: ObservableObject {
             records.append(rec)
         }
 
-        outbox.removeAll { $0.entityUid == rec.id }
+        outbox.removeAll { $0.entity == "record" && $0.entityUid == rec.id }
         outbox.append(OutboxOp(
             id: ULID.generate(),
             bookUid: rec.bookUid,
@@ -218,13 +383,20 @@ final class LedgerStore: ObservableObject {
             deviceId: deviceID,
             splitGroup: rec.splitGroup
         ))
+    }
+
+    func delete(_ record: LedgerRecord) {
+        if !trash.contains(where: { $0.id == record.id && $0.bookUid == record.bookUid }) {
+            trash.append(record)
+        }
+        deleteLocal(record)
         save()
         Task { await syncNow() }
     }
 
-    func delete(_ record: LedgerRecord) {
+    private func deleteLocal(_ record: LedgerRecord) {
         records.removeAll { $0.id == record.id && $0.bookUid == record.bookUid }
-        outbox.removeAll { $0.entityUid == record.id }
+        outbox.removeAll { $0.entity == "record" && $0.entityUid == record.id }
         outbox.append(OutboxOp(
             id: ULID.generate(),
             bookUid: record.bookUid,
@@ -236,8 +408,6 @@ final class LedgerStore: ObservableObject {
             deviceId: deviceID,
             splitGroup: nil
         ))
-        save()
-        Task { await syncNow() }
     }
 
     func login(username: String, password: String) async -> String? {
@@ -269,6 +439,7 @@ final class LedgerStore: ObservableObject {
                 selectedBookID = book.id
             }
 
+            // 登录前在本地记的账，迁移到账号的真实 book_uid，避免推到一个云端不存在的账本。
             let localID = "book-local"
             for i in records.indices where records[i].bookUid == localID {
                 records[i].bookUid = response.bookUid
@@ -299,7 +470,10 @@ final class LedgerStore: ObservableObject {
         do {
             let remoteBooks = try await sync.books(endpoint: auth.endpoint, token: token)
             if !remoteBooks.isEmpty {
-                books = remoteBooks
+                let remoteIDs = Set(remoteBooks.map(\.id))
+                // 本机新建但云端还没收录 / 还没推成功的账本不能因为一次刷新就消失。
+                let localPending = books.filter { !remoteIDs.contains($0.id) }
+                books = remoteBooks + localPending
                 if selectedBookID == nil || !books.contains(where: { $0.id == selectedBookID }) {
                     selectedBookID = books.first?.id
                 }
@@ -317,6 +491,17 @@ final class LedgerStore: ObservableObject {
                     records[i].pending = false
                 }
                 save()
+            }
+
+            // 新账本 / 改名 / 期初是刚推上去的，必须再读一次 /v1/books 才会出现。
+            let refreshedBooks = try await sync.books(endpoint: auth.endpoint, token: token)
+            if !refreshedBooks.isEmpty {
+                let remoteIDs = Set(refreshedBooks.map(\.id))
+                let localPending = books.filter { !remoteIDs.contains($0.id) }
+                books = refreshedBooks + localPending
+                if selectedBookID == nil || !books.contains(where: { $0.id == selectedBookID }) {
+                    selectedBookID = books.first?.id
+                }
             }
 
             var hasMore = true
@@ -387,12 +572,6 @@ final class LedgerStore: ObservableObject {
         return ([header] + rows).joined(separator: "\n")
     }
 
-    private func savePreferences() {
-        defaults.set(customMembers, forKey: membersKey)
-        defaults.set(customCategories, forKey: categoriesKey)
-        defaults.set(customAccounts, forKey: accountsKey)
-    }
-
     private func save() {
         let state = PersistedState(
             books: books,
@@ -402,7 +581,10 @@ final class LedgerStore: ObservableObject {
             selectedBookID: selectedBookID,
             auth: auth,
             deviceID: deviceID,
-            lastSyncAt: lastSyncAt
+            lastSyncAt: lastSyncAt,
+            taxonomies: taxonomies,
+            budgets: budgets,
+            trash: trash
         )
         persistence.save(state)
     }

@@ -9,6 +9,10 @@ struct PersistedState: Codable {
     var auth: AuthState?
     var deviceID: String
     var lastSyncAt: Date?
+    /// 旧版本状态文件没有这个字段；用可选值保证升级后仍能读。
+    var taxonomies: [String: BookTaxonomy]?
+    var budgets: [String: Int]?
+    var trash: [LedgerRecord]?
 }
 
 final class Persistence {

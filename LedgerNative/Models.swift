@@ -58,14 +58,27 @@ struct RemotePayload: Codable {
     var splitGroup: String?
     var excludeTotal: Int?
     var localId: Int?
+    // 账本元数据（entity == "book"）专用；记录 payload 里为空。
+    var name: String? = nil
+    var openingCents: Int? = nil
+    var color: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case schema, origin, amount, direction, member, date, note, category, account
+        case schema, origin, amount, direction, member, date, note, category, account, name, color
         case amountCents = "amount_cents"
         case groupNote = "group_note"
         case splitGroup = "split_group"
         case excludeTotal = "exclude_total"
         case localId = "local_id"
+        case openingCents = "opening_cents"
+    }
+
+    static func book(name: String, openingCents: Int, color: String) -> RemotePayload {
+        RemotePayload(schema: nil, origin: "ios", amount: nil, amountCents: nil,
+                      direction: nil, member: nil, date: nil, note: nil,
+                      category: nil, account: nil, groupNote: nil, splitGroup: nil,
+                      excludeTotal: nil, localId: nil, name: name,
+                      openingCents: max(0, openingCents), color: color)
     }
 }
 
@@ -251,6 +264,56 @@ struct AuthState: Codable {
     var bookUid: String
     var pairCode: String
     var endpoint: String
+}
+
+/// 每本账本自己的成员 / 分类 / 账户选项。只影响当前账本，切换账本不会串。
+struct BookTaxonomy: Codable, Hashable {
+    var members: [String] = []
+    var expenseCategories: [String] = []
+    var incomeCategories: [String] = []
+    var accounts: [String] = []
+}
+
+enum TaxonomyKind: String, CaseIterable, Identifiable {
+    case members
+    case categories
+    case accounts
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .members: return "成员"
+        case .categories: return "分类"
+        case .accounts: return "账户"
+        }
+    }
+}
+
+/// 明细列表 / 首页的一行：单笔记账是一行，同 split_group 的多条明细折叠成一笔。
+struct RecordGroup: Identifiable, Hashable {
+    let id: String
+    let records: [LedgerRecord]
+
+    var first: LedgerRecord { records[0] }
+    var isSplit: Bool { records.count > 1 || records[0].splitGroup != nil }
+    var direction: Direction { first.direction }
+    var date: String { first.date }
+    var amountCents: Int {
+        records.filter { !$0.excludeTotal }.reduce(0) { $0 + $1.amountCents }
+    }
+    var title: String {
+        if !isSplit { return first.category.isEmpty ? "未分类" : first.category }
+        let note = first.groupNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        return note.isEmpty ? "拆分 \(records.count) 笔" : note
+    }
+    var subtitle: String {
+        if isSplit {
+            let cats = records.map(\.category).filter { !$0.isEmpty }
+            let joined = cats.prefix(3).joined(separator: " · ")
+            return "拆分 \(records.count) 笔" + (joined.isEmpty ? "" : " · \(joined)")
+        }
+        return first.note
+    }
 }
 
 struct LoginResponse: Codable {

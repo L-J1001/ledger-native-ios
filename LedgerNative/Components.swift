@@ -1,5 +1,61 @@
 import SwiftUI
 
+struct RecordGroupRow: View {
+    let group: RecordGroup
+    var showsDate: Bool = true
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(group.direction == .expense ? AppTheme.expense.opacity(0.12) : AppTheme.income.opacity(0.12))
+                    .frame(width: 38, height: 38)
+                Image(systemName: group.direction == .expense ? "arrow.up.right" : "arrow.down.left")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(group.direction == .expense ? AppTheme.expense : AppTheme.income)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(group.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                    if group.isSplit {
+                        Text("拆分")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.accentSoft)
+                            .clipShape(Capsule())
+                    }
+                    if group.records.contains(where: { $0.pending }) {
+                        Circle().fill(Color.orange).frame(width: 5, height: 5)
+                    }
+                }
+                HStack(spacing: 5) {
+                    if showsDate { Text(shortDate(group.date)) }
+                    if !group.subtitle.isEmpty {
+                        Text("· \(group.subtitle)")
+                            .lineLimit(1)
+                    }
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.textSecondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text("\(group.direction.sign)\(money(group.amountCents))")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(group.direction == .expense ? AppTheme.expense : AppTheme.income)
+                .monospacedDigit()
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
 struct RecordRow: View {
     let record: LedgerRecord
     var showsDate: Bool = true
@@ -24,27 +80,13 @@ struct RecordRow: View {
                             .fill(Color.orange)
                             .frame(width: 5, height: 5)
                     }
-                    if record.splitGroup != nil {
-                        Text("拆分")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(AppTheme.accent)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(AppTheme.accentSoft)
-                            .clipShape(Capsule())
-                    }
                 }
                 HStack(spacing: 5) {
                     if showsDate {
                         Text(shortDate(record.date))
                     }
-                    Text("· \(record.member)")
                     if !record.note.isEmpty {
                         Text("· \(record.note)")
-                            .lineLimit(1)
-                    }
-                    if !record.groupNote.isEmpty && record.groupNote != record.note {
-                        Text("· \(record.groupNote)")
                             .lineLimit(1)
                     }
                 }

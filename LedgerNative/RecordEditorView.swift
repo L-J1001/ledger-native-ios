@@ -14,21 +14,15 @@ struct RecordEditorView: View {
     @State private var note: String
     @State private var member: String
     @State private var account: String
+    @State private var splitEnabled: Bool
+    @State private var splitLines: [SplitLine]
+    @State private var groupNote: String
+    @State private var excludeTotal: Bool
+    @State private var didLoadSplit = false
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var savedHint = false
-    @State private var showTaxonomy = false
-    @State private var splitEnabled = false
-    @State private var splitRows: [SplitDraft] = [SplitDraft()]
-    @State private var didLoadSplitRows = false
     @FocusState private var amountFocused: Bool
-
-    private struct SplitDraft: Identifiable {
-        let id = UUID()
-        var category: String = "餐饮"
-        var amountText: String = ""
-        var note: String = ""
-    }
 
     init(record: LedgerRecord? = nil) {
         editing = record
@@ -40,18 +34,20 @@ struct RecordEditorView: View {
         _member = State(initialValue: record?.member ?? "我")
         _account = State(initialValue: record?.account ?? "")
         _splitEnabled = State(initialValue: record?.splitGroup != nil)
-        if let record, record.splitGroup != nil {
-            _splitRows = State(initialValue: [SplitDraft(category: record.category,
-                                                       amountText: String(format: "%.2f", record.amountYuan),
-                                                       note: record.note)])
-        }
+        _splitLines = State(initialValue: [])
+        _groupNote = State(initialValue: record?.groupNote ?? "")
+        _excludeTotal = State(initialValue: record?.excludeTotal ?? false)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
-                    amountCard
+                VStack(spacing: 16) {
+                    if !splitEnabled {
+                        amountCard
+                    }
+                    directionPicker
+                    splitToggle
                     metaCard
                     if splitEnabled {
                         splitCard
@@ -59,6 +55,7 @@ struct RecordEditorView: View {
                         categoryCard
                     }
                     noteCard
+                    excludeCard
                     actionButtons
                 }
                 .padding(.horizontal, 18)
@@ -67,10 +64,13 @@ struct RecordEditorView: View {
             }
             .background(AppTheme.grouped.ignoresSafeArea())
             .scrollIndicators(.hidden)
-            .onAppear {
-                if editing == nil { amountFocused = true }
-                normalizeCategory()
-                loadSplitRowsIfNeeded()
+            .onAppear(perform: loadSplitIfNeeded)
+            .onChange(of: direction) { _, newValue in
+                let options = store.categories(for: newValue)
+                if !options.contains(category), let first = options.first { category = first }
+                for index in splitLines.indices where !options.contains(splitLines[index].category) {
+                    splitLines[index].category = options.first ?? "其他"
+                }
             }
             .navigationTitle(editing == nil ? "记一笔" : "编辑账目")
             .navigationBarTitleDisplayMode(.inline)
@@ -92,9 +92,6 @@ struct RecordEditorView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
-            .sheet(isPresented: $showTaxonomy) {
-                NavigationStack { TaxonomyView().environmentObject(store) }
-            }
             .overlay(alignment: .top) {
                 if savedHint {
                     Text("已保存，继续记下一笔")
@@ -111,34 +108,44 @@ struct RecordEditorView: View {
         }
     }
 
+    private func loadSplitIfNeeded() {
+        guard !didLoadSplit else { return }
+        didLoadSplit = true
+        if let editing, let group = editing.splitGroup, !group.isEmpty {
+            splitEnabled = true
+            let siblings = store.splitRecords(group: group, bookID: editing.bookUid)
+            let list = siblings.isEmpty ? [editing] : siblings
+            splitLines = list.map {
+                SplitLine(category: $0.category,
+                          amountText: String(format: "%.2f", $0.amountYuan),
+                          note: $0.note)
+            }
+            groupNote = editing.groupNote
+            member = editing.member
+            account = editing.account
+            excludeTotal = editing.excludeTotal
+        } else if editing == nil {
+            splitLines = [SplitLine(category: category, amountText: "", note: "")]
+            amountFocused = true
+        }
+    }
+
     private var amountCard: some View {
         VStack(spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("¥")
                     .font(.system(size: 24, weight: .semibold, design: .rounded))
                     .foregroundStyle(AppTheme.textSecondary)
-                if splitEnabled {
-                    Text(String(format: "%.2f", splitTotal))
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                    Spacer(minLength: 0)
-                } else {
-                    TextField("0.00", text: $amountText)
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.leading)
-                        .monospacedDigit()
-                        .focused($amountFocused)
-                    Spacer(minLength: 0)
-                }
+                TextField("0.00", text: $amountText)
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.leading)
+                    .monospacedDigit()
+                    .focused($amountFocused)
+                Spacer(minLength: 0)
             }
 
-            Picker("方向", selection: $direction) {
-                Text("支出").tag(Direction.expense)
-                Text("收入").tag(Direction.income)
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: direction) { _, _ in normalizeCategory() }
+            Divider().overlay(AppTheme.hairline)
 
             HStack {
                 Text(direction == .expense ? "记一笔支出" : "记一笔收入")
@@ -151,6 +158,48 @@ struct RecordEditorView: View {
             }
         }
         .cardStyle(padding: 18)
+    }
+
+    private var directionPicker: some View {
+        Picker("方向", selection: $direction) {
+            Text("支出").tag(Direction.expense)
+            Text("收入").tag(Direction.income)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    private var splitToggle: some View {
+        Toggle(isOn: $splitEnabled.animation(.easeInOut(duration: 0.22))) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("按分类拆开")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("一张票多行明细，和桌面端同一套账")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+        }
+        .tint(AppTheme.accent)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(AppTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 0.5)
+        )
+        .onChange(of: splitEnabled) { _, enabled in
+            if enabled && splitLines.isEmpty {
+                splitLines = [SplitLine(category: category,
+                                        amountText: amountText,
+                                        note: note)]
+            } else if !enabled {
+                groupNote = ""
+                if splitLines.count == 1 {
+                    amountText = splitLines[0].amountText
+                    category = splitLines[0].category
+                }
+            }
+        }
     }
 
     private var metaCard: some View {
@@ -167,55 +216,40 @@ struct RecordEditorView: View {
 
             Divider().overlay(AppTheme.hairline)
 
-            Menu {
-                ForEach(store.allMembers, id: \.self) { item in
-                    Button(item) { member = item }
-                }
-            } label: {
-                menuRow(title: "成员", value: member, icon: "person")
-            }
-
-            Divider().overlay(AppTheme.hairline)
-
-            Menu {
-                Button("不选账户") { account = "" }
-                ForEach(store.allAccounts, id: \.self) { item in
-                    Button(item) { account = item }
-                }
-            } label: {
-                menuRow(title: "账户", value: account.isEmpty ? "未选" : account, icon: "creditcard")
-            }
-
-            Divider().overlay(AppTheme.hairline)
-
-            Toggle(isOn: $splitEnabled) {
-                Label("拆分多笔", systemImage: "square.split.2x1")
+            HStack {
+                Text("成员")
                     .font(.system(size: 13, weight: .medium))
+                    .frame(width: 58, alignment: .leading)
+                Spacer()
+                Picker("成员", selection: $member) {
+                    ForEach(memberChoices, id: \.self) { item in
+                        Text(item).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .tint(AppTheme.accent)
             }
-            .tint(AppTheme.accent)
-            .padding(.vertical, 10)
-            .onChange(of: splitEnabled) { _, on in
-                if on, splitRows.isEmpty { splitRows = [SplitDraft()] }
-            }
+            .padding(.vertical, 8)
 
             Divider().overlay(AppTheme.hairline)
 
-            Button { showTaxonomy = true } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                    Text("管理成员和分类")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AppTheme.textSecondary)
+            HStack {
+                Text("账户")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 58, alignment: .leading)
+                Spacer()
+                Picker("账户", selection: $account) {
+                    Text("不选账户").tag("")
+                    ForEach(accountChoices, id: \.self) { item in
+                        Text(item).tag(item)
+                    }
                 }
-                .padding(.vertical, 12)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .tint(AppTheme.accent)
             }
-            .buttonStyle(.plain)
+            .padding(.vertical, 8)
         }
         .padding(.horizontal, 16)
         .background(AppTheme.card)
@@ -226,37 +260,11 @@ struct RecordEditorView: View {
         )
     }
 
-    private func menuRow(title: String, value: String, icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AppTheme.textSecondary)
-                .frame(width: 20)
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-            Spacer()
-            Text(value)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .padding(.vertical, 12)
-    }
-
     private var categoryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("分类")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.textSecondary)
-                Spacer()
-                Text("只能从列表选择")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
+            Text("分类")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.textSecondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 8)], spacing: 8) {
                 ForEach(categories, id: \.self) { item in
                     Button {
@@ -281,126 +289,137 @@ struct RecordEditorView: View {
         .cardStyle(padding: 14)
     }
 
-    private var splitTotal: Double {
-        splitRows.reduce(0) { $0 + (Double($1.amountText.replacingOccurrences(of: ",", with: ".")) ?? 0) }
-    }
-
     private var splitCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            splitHeader
-            Text("一张票按分类拆开，金额自动合计；保存后会作为一组账单。")
-                .font(.system(size: 11))
-                .foregroundStyle(AppTheme.textSecondary)
-            ForEach($splitRows) { $row in
-                splitRow(row: $row)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("明细")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.textSecondary)
+                Spacer()
+                Text("合计 \(money(splitTotalCents))")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(AppTheme.accent)
+                    .monospacedDigit()
             }
-            addSplitRowButton
+
+            ForEach($splitLines) { $line in
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Picker("分类", selection: $line.category) {
+                            ForEach(categories, id: \.self) { item in
+                                Text(item).tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .tint(.primary)
+                        .frame(maxWidth: 112, alignment: .leading)
+
+                        TextField("0.00", text: $line.amountText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .frame(width: 88)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(AppTheme.grouped)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            if splitLines.count > 1 {
+                                splitLines.removeAll { $0.id == line.id }
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(AppTheme.textSecondary)
+                                .frame(width: 28, height: 28)
+                                .background(AppTheme.grouped)
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .opacity(splitLines.count > 1 ? 1 : 0.35)
+                    }
+
+                    TextField("明细备注（选填）", text: $line.note)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(AppTheme.grouped)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .padding(.vertical, 4)
+                if line.id != splitLines.last?.id {
+                    Divider().overlay(AppTheme.hairline)
+                }
+            }
+
+            Button {
+                let next = store.categories(for: direction)
+                splitLines.append(SplitLine(category: next.first ?? category, amountText: "", note: ""))
+            } label: {
+                Label("添加一行", systemImage: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.plain)
         }
         .cardStyle(padding: 14)
     }
 
-    private var splitHeader: some View {
-        HStack {
-            Text("明细 · \(splitRows.count) 笔")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AppTheme.textSecondary)
-            Spacer()
-            Text("合计 ¥\(String(format: "%.2f", splitTotal))")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-        }
-    }
-
-    @ViewBuilder
-    private func splitRow(row: Binding<SplitDraft>) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Menu {
-                    ForEach(categories, id: \.self) { item in
-                        Button(item) { row.wrappedValue.category = item }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(row.wrappedValue.category)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(AppTheme.grouped)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-                TextField("0.00", text: row.amountText)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .monospacedDigit()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .background(AppTheme.grouped)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .frame(width: 92)
-                Button {
-                    splitRows.removeAll { $0.id == row.wrappedValue.id }
-                    if splitRows.isEmpty { splitRows = [SplitDraft()] }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-                .buttonStyle(.plain)
-            }
-            TextField("明细备注（选填）", text: row.note)
-                .font(.system(size: 12))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .background(AppTheme.grouped)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .padding(10)
-        .background(AppTheme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppTheme.hairline, lineWidth: 0.5))
-    }
-
-    private var addSplitRowButton: some View {
-        Button {
-            splitRows.append(SplitDraft(category: categories.first ?? "其他"))
-        } label: {
-            Label("添加一行", systemImage: "plus")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AppTheme.accent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(AppTheme.accentSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var noteCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("备注")
+            Text(splitEnabled ? "整笔备注" : "备注")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(AppTheme.textSecondary)
-            TextField("备注（选填）", text: $note, axis: .vertical)
+            TextField(splitEnabled ? "整笔备注（选填）" : "备注（选填）",
+                      text: splitEnabled ? $groupNote : $note, axis: .vertical)
                 .lineLimit(2...4)
                 .font(.system(size: 14))
         }
         .cardStyle(padding: 14)
     }
 
+    private var excludeCard: some View {
+        Toggle(isOn: $excludeTotal) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("不计入总收支")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("和桌面端一致：只留流水，不参与余额和统计")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+        }
+        .tint(AppTheme.accent)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(AppTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 0.5)
+        )
+    }
+
     private var actionButtons: some View {
         VStack(spacing: 10) {
             if editing == nil {
-                Button { save(continueAfter: true) } label: {
+                Button {
+                    save(continueAfter: true)
+                } label: {
                     Text("保存并继续")
                 }
                 .buttonStyle(PrimaryButtonStyle())
             }
 
-            Button { save(continueAfter: false) } label: {
+            Button {
+                save(continueAfter: false)
+            } label: {
                 Text(editing == nil ? "保存" : "保存修改")
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -408,60 +427,60 @@ struct RecordEditorView: View {
     }
 
     private var categories: [String] {
-        store.categories(for: direction)
+        var base = store.categories(for: direction)
+        if !category.isEmpty, !base.contains(category) { base.insert(category, at: 0) }
+        return base
     }
 
-    private func normalizeCategory() {
-        let list = categories
-        if !list.contains(category), let first = list.first {
-            category = first
+    private var memberChoices: [String] {
+        var base = store.memberOptions
+        if !member.isEmpty, !base.contains(member) { base.insert(member, at: 0) }
+        return base
+    }
+
+    private var accountChoices: [String] {
+        var base = store.accountOptions
+        if !account.isEmpty, !base.contains(account) { base.insert(account, at: 0) }
+        return base
+    }
+
+    private var splitTotalCents: Int {
+        splitLines.reduce(0) { total, line in
+            total + (cents(from: line.amountText) ?? 0)
         }
     }
 
-    private func loadSplitRowsIfNeeded() {
-        guard !didLoadSplitRows, let editing, let group = editing.splitGroup else { return }
-        didLoadSplitRows = true
-        let siblings = store.records
-            .filter { $0.bookUid == store.writeBookID && $0.splitGroup == group }
-            .sorted { $0.id < $1.id }
-        guard !siblings.isEmpty else { return }
-        splitRows = siblings.map {
-            SplitDraft(category: $0.category,
-                       amountText: String(format: "%.2f", $0.amountYuan),
-                       note: $0.note)
-        }
+    private func cents(from text: String) -> Int? {
+        let cleaned = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "，", with: ".")
+            .replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(cleaned), value > 0 else { return nil }
+        return Int(round(value * 100))
     }
 
     private func save(continueAfter: Bool) {
         if splitEnabled {
             saveSplit(continueAfter: continueAfter)
-            return
+        } else {
+            saveSingle(continueAfter: continueAfter)
         }
-        let cleaned = amountText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "，", with: ".")
-            .replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(cleaned), value > 0 else {
+    }
+
+    private func saveSingle(continueAfter: Bool) {
+        guard let cents = cents(from: amountText) else {
             errorMessage = "请输入大于 0 的金额"
             showError = true
             return
         }
-        let cents = Int(round(value * 100))
-        guard cents > 0 else {
-            errorMessage = "金额太小了"
-            showError = true
-            return
-        }
-        guard categories.contains(category) else {
-            errorMessage = "请从分类列表里选择，避免账本分类不一致"
-            showError = true
-            return
-        }
-        guard store.allMembers.contains(member) else {
-            errorMessage = "请从成员列表里选择"
-            showError = true
-            return
-        }
+
+        let old: [LedgerRecord] = {
+            guard let editing else { return [] }
+            if let group = editing.splitGroup, !group.isEmpty {
+                return store.splitRecords(group: group, bookID: editing.bookUid)
+            }
+            return [editing]
+        }()
 
         let record = LedgerRecord(
             id: editing?.id ?? ULID.generate(),
@@ -469,29 +488,91 @@ struct RecordEditorView: View {
             date: dateString(date),
             direction: direction,
             amountCents: cents,
-            category: category,
+            category: category.isEmpty ? "未分类" : category,
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-            member: member,
-            account: account,
+            member: member.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "我" : member,
+            account: account.trimmingCharacters(in: .whitespacesAndNewlines),
             groupNote: "",
             splitGroup: nil,
-            excludeTotal: false,
+            excludeTotal: excludeTotal,
             updatedAt: nowMillis(),
             pending: true
         )
-        if let editing, let oldGroup = editing.splitGroup {
-            store.records
-                .filter { $0.bookUid == store.writeBookID && $0.splitGroup == oldGroup && $0.id != record.id }
-                .forEach(store.delete)
+        store.replaceRecords([record], removing: old)
+        finishSave(continueAfter: continueAfter)
+    }
+
+    private func saveSplit(continueAfter: Bool) {
+        guard splitLines.count >= 2 else {
+            errorMessage = "拆分记账至少要两行明细"
+            showError = true
+            return
         }
-        store.upsert(record)
+        for (index, line) in splitLines.enumerated() {
+            guard cents(from: line.amountText) != nil else {
+                errorMessage = "第 \(index + 1) 行金额不正确"
+                showError = true
+                return
+            }
+            guard !line.category.isEmpty else {
+                errorMessage = "第 \(index + 1) 行请选择分类"
+                showError = true
+                return
+            }
+        }
+        guard splitTotalCents > 0 else {
+            errorMessage = "明细合计必须大于 0"
+            showError = true
+            return
+        }
+
+        let group = editing?.splitGroup?.isEmpty == false
+            ? editing!.splitGroup!
+            : "sg-" + ULID.generate()
+        let old: [LedgerRecord] = {
+            guard let editing else { return [] }
+            if let group = editing.splitGroup, !group.isEmpty {
+                return store.splitRecords(group: group, bookID: editing.bookUid)
+            }
+            return [editing]
+        }()
+
+        let now = nowMillis()
+        let newRecords = splitLines.enumerated().map { index, line -> LedgerRecord in
+            LedgerRecord(
+                id: index == 0 && editing != nil ? editing!.id : ULID.generate(),
+                bookUid: store.writeBookID,
+                date: dateString(date),
+                direction: direction,
+                amountCents: cents(from: line.amountText) ?? 0,
+                category: line.category,
+                note: line.note.trimmingCharacters(in: .whitespacesAndNewlines),
+                member: member.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "我" : member,
+                account: account.trimmingCharacters(in: .whitespacesAndNewlines),
+                groupNote: groupNote.trimmingCharacters(in: .whitespacesAndNewlines),
+                splitGroup: group,
+                excludeTotal: excludeTotal,
+                updatedAt: now,
+                pending: true
+            )
+        }
+        store.replaceRecords(newRecords, removing: old)
+        finishSave(continueAfter: continueAfter)
+    }
+
+    private func finishSave(continueAfter: Bool) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         amountFocused = false
 
         if continueAfter {
             amountText = ""
             note = ""
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { savedHint = true }
+            groupNote = ""
+            category = store.categories(for: direction).first ?? "其他"
+            splitLines = [SplitLine(category: category, amountText: "", note: "")]
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                savedHint = true
+            }
             Task {
                 try? await Task.sleep(nanoseconds: 1_600_000_000)
                 await MainActor.run {
@@ -502,82 +583,11 @@ struct RecordEditorView: View {
             dismiss()
         }
     }
+}
 
-    private func saveSplit(continueAfter: Bool) {
-        let rows = splitRows.filter {
-            !$0.amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        guard !rows.isEmpty else {
-            errorMessage = "拆分记账至少要有一笔金额"
-            showError = true
-            return
-        }
-        guard store.allMembers.contains(member) else {
-            errorMessage = "请从成员列表里选择"
-            showError = true
-            return
-        }
-        var parsed: [(SplitDraft, Int)] = []
-        for row in rows {
-            let cleaned = row.amountText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "，", with: ".")
-                .replacingOccurrences(of: ",", with: ".")
-            guard let value = Double(cleaned), value > 0, Int(round(value * 100)) > 0 else {
-                errorMessage = "「\(row.category)」的金额不正确"
-                showError = true
-                return
-            }
-            guard categories.contains(row.category) else {
-                errorMessage = "请从分类列表里选择，避免账本分类不一致"
-                showError = true
-                return
-            }
-            parsed.append((row, Int(round(value * 100))))
-        }
-
-        let group = editing?.splitGroup ?? "split-\(ULID.generate())"
-        if let editing, let oldGroup = editing.splitGroup {
-            store.records
-                .filter { $0.bookUid == store.writeBookID && $0.splitGroup == oldGroup }
-                .forEach(store.delete)
-        }
-        for (index, item) in parsed.enumerated() {
-            let row = item.0
-            let cents = item.1
-            let record = LedgerRecord(
-                id: index == 0 ? (editing?.id ?? ULID.generate()) : ULID.generate(),
-                bookUid: store.writeBookID,
-                date: dateString(date),
-                direction: direction,
-                amountCents: cents,
-                category: row.category,
-                note: row.note.trimmingCharacters(in: .whitespacesAndNewlines),
-                member: member,
-                account: account,
-                groupNote: note.trimmingCharacters(in: .whitespacesAndNewlines),
-                splitGroup: group,
-                excludeTotal: false,
-                updatedAt: nowMillis(),
-                pending: true
-            )
-            store.upsert(record)
-        }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        amountFocused = false
-
-        if continueAfter {
-            splitRows = [SplitDraft(category: categories.first ?? "其他")]
-            note = ""
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { savedHint = true }
-            Task {
-                try? await Task.sleep(nanoseconds: 1_600_000_000)
-                await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.25)) { savedHint = false }
-                }
-            }
-        } else {
-            dismiss()
-        }
-    }
+private struct SplitLine: Identifiable, Equatable {
+    let id = UUID()
+    var category: String
+    var amountText: String
+    var note: String
 }

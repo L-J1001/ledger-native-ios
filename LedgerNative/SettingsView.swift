@@ -2,19 +2,19 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var store: LedgerStore
-    @EnvironmentObject private var reminder: RenewalReminder
-    @State private var showAccount = false
-    @State private var showBudget = false
+    @State private var showLogin = false
+    @State private var bookTarget: BookEditorTarget?
 
     var body: some View {
         NavigationStack {
             List {
                 accountSection
-                renewalSection
                 syncSection
-                preferenceSection
                 booksSection
+                taxonomySection
+                budgetSection
                 dataSection
+                supportSection
                 aboutSection
             }
             .listStyle(.insetGrouped)
@@ -22,89 +22,89 @@ struct SettingsView: View {
             .background(AppTheme.grouped)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
-            .refreshable { await store.syncNow() }
-            .sheet(isPresented: $showAccount) {
-                AccountSheet().environmentObject(store)
+            .refreshable {
+                await store.syncNow()
             }
-            .sheet(isPresented: $showBudget) {
-                NavigationStack { BudgetView().environmentObject(store) }
+            .sheet(isPresented: $showLogin) {
+                LoginView()
+                    .environmentObject(store)
+                    .presentationDetents([.medium, .large])
+            }
+            .sheet(item: $bookTarget) { target in
+                NavigationStack {
+                    BookEditorView(book: target.book)
+                        .environmentObject(store)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("取消") { bookTarget = nil }
+                            }
+                        }
+                }
+                .presentationDetents([.medium, .large])
             }
         }
     }
 
     private var accountSection: some View {
         Section {
-            Button { showAccount = true } label: {
+            if store.isLoggedIn {
                 HStack(spacing: 12) {
                     ZStack {
                         Circle()
                             .fill(AppTheme.accentSoft)
-                            .frame(width: 46, height: 46)
-                        Text(store.isLoggedIn ? (store.accountName.isEmpty ? "账" : String(store.accountName.prefix(1))) : "账")
+                            .frame(width: 44, height: 44)
+                        Text(store.accountName.isEmpty ? "账" : String(store.accountName.prefix(1)))
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(AppTheme.accent)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(store.isLoggedIn ? (store.accountName.isEmpty ? "已登录" : store.accountName) : "登录云端账号")
+                        Text(store.accountName)
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Text(store.isLoggedIn ? (store.auth?.username ?? "") : "和桌面账本双向同步")
+                        Text(store.auth?.username ?? "")
                             .font(.system(size: 12))
                             .foregroundStyle(AppTheme.textSecondary)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AppTheme.textSecondary)
+                    Text("已登录")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AppTheme.income)
                 }
-                .padding(.vertical, 3)
-            }
-            .buttonStyle(.plain)
+                .padding(.vertical, 4)
 
-            if store.isLoggedIn {
-                HStack {
-                    Text("配对码")
-                    Spacer()
-                    Text(store.auth?.pairCode ?? "—")
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .monospacedDigit()
-                }
                 Button(role: .destructive) {
                     store.logout()
                 } label: {
                     Text("退出登录")
                 }
+            } else {
+                Button {
+                    showLogin = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .foregroundStyle(AppTheme.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("登录云端账号")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text("和桌面账本双向同步")
+                                .font(.system(size: 12))
+                                .foregroundStyle(AppTheme.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AppTheme.textSecondary)
+                    }
+                    .padding(.vertical, 4)
+                }
             }
         } header: {
             Text("账号")
         } footer: {
-            Text(store.isLoggedIn ? "手机和桌面使用同一账号；退出只清除本机会话，不影响云端账本。" : "未登录也可以离线记账，登录后再补同步。")
-        }
-    }
-
-    private var renewalSection: some View {
-        Section {
-            HStack {
-                Label("签名剩余", systemImage: "signature")
-                Spacer()
-                Text("\(reminder.daysRemaining) 天")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(reminder.daysRemaining <= 2 ? AppTheme.expense : AppTheme.income)
+            if let auth = store.auth {
+                Text("配对码 \(auth.pairCode) · 与桌面/手机使用同一账号")
             }
-            HStack {
-                Text("到期日")
-                Spacer()
-                Text(reminder.expiryDate.formatted(date: .abbreviated, time: .omitted))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            Button("我已续签，重新计时") {
-                reminder.markRenewed()
-            }
-            Text("免费 Apple ID 签名 7 天有效。App 会在第 5、6、7 天发通知；到期前打开电脑上的 Sideloadly 覆盖安装即可，账目保留。")
-                .font(.system(size: 12))
-                .foregroundStyle(AppTheme.textSecondary)
-        } header: {
-            Text("签名与续签")
         }
     }
 
@@ -153,54 +153,105 @@ struct SettingsView: View {
         }
     }
 
-    private var preferenceSection: some View {
-        Section {
-            NavigationLink {
-                TaxonomyView().environmentObject(store)
-            } label: {
-                Label("成员 · 分类 · 账户", systemImage: "square.grid.2x2")
-            }
-
-            Button { showBudget = true } label: {
-                HStack {
-                    Label("本月预算", systemImage: "gauge.with.dots.needle.50percent")
-                    Spacer()
-                    Text(store.monthlyBudgetCents > 0 ? money(store.monthlyBudgetCents) : "未设置")
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-            }
-        } header: {
-            Text("记账偏好")
-        } footer: {
-            Text("成员、分类和账户只从列表选择，避免手输错字导致账本对不上；桌面端已用过的值同步后会自动出现。")
-        }
-    }
-
     private var booksSection: some View {
         Section {
             ForEach(store.books) { book in
-                Button {
-                    store.selectBook(book.id)
-                } label: {
-                    HStack {
-                        Circle()
-                            .fill(Color(hex: book.colorHex))
-                            .frame(width: 9, height: 9)
-                        Text(book.name)
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        if store.selectedBook?.id == book.id {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(AppTheme.accent)
+                HStack(spacing: 10) {
+                    Button {
+                        store.selectBook(book.id)
+                    } label: {
+                        HStack {
+                            Circle()
+                                .fill(Color(hex: book.colorHex))
+                                .frame(width: 9, height: 9)
+                            Text(book.name)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if store.selectedBook?.id == book.id {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(AppTheme.accent)
+                            }
                         }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        bookTarget = BookEditorTarget(book: book)
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .buttonStyle(.borderless)
                 }
+            }
+
+            Button {
+                bookTarget = BookEditorTarget(book: nil)
+            } label: {
+                Label("新建账本", systemImage: "plus.circle.fill")
+                    .foregroundStyle(AppTheme.accent)
             }
         } header: {
             Text("账本")
         } footer: {
-            Text("这边只做切换；新建/改名请在桌面端操作。")
+            Text("账本可在这里切、建、改名和改期初；每个账本的成员/分类/账户只显示当前账本。")
+        }
+    }
+
+    private var taxonomySection: some View {
+        Section {
+            NavigationLink {
+                TaxonomyView(kind: .members)
+                    .environmentObject(store)
+            } label: {
+                Label("成员管理", systemImage: "person.2.fill")
+            }
+            NavigationLink {
+                TaxonomyView(kind: .categories)
+                    .environmentObject(store)
+            } label: {
+                Label("分类管理", systemImage: "square.grid.2x2.fill")
+            }
+            NavigationLink {
+                TaxonomyView(kind: .accounts)
+                    .environmentObject(store)
+            } label: {
+                Label("账户管理", systemImage: "creditcard.fill")
+            }
+        } header: {
+            Text("当前账本 · 选项")
+        } footer: {
+            Text("记账时只从这些选项里选，不再手输；桌面端记录里用过的值同步后会自动出现。")
+        }
+    }
+
+    private var budgetSection: some View {
+        Section("预算与回收站") {
+            NavigationLink {
+                BudgetView()
+                    .environmentObject(store)
+            } label: {
+                HStack {
+                    Label("本月预算", systemImage: "gauge.with.dots.needle.67percent")
+                    Spacer()
+                    Text(store.budgetCents > 0 ? money(store.budgetCents) : "未设置")
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+            }
+            NavigationLink {
+                TrashView()
+                    .environmentObject(store)
+            } label: {
+                HStack {
+                    Label("回收站", systemImage: "trash")
+                    Spacer()
+                    Text("\(store.trashRecords.count) 条")
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+            }
         }
     }
 
@@ -212,12 +263,31 @@ struct SettingsView: View {
         }
     }
 
+    private var supportSection: some View {
+        Section("帮助与支持") {
+            NavigationLink {
+                HealthView()
+                    .environmentObject(store)
+            } label: {
+                Label("数据体检", systemImage: "stethoscope")
+            }
+            NavigationLink {
+                FeedbackView()
+                    .environmentObject(store)
+            } label: {
+                Label("意见反馈", systemImage: "bubble.left.and.bubble.right")
+            }
+        } footer: {
+            Text("反馈匿名提交；数据体检只在本机运行，不上传账目。")
+        }
+    }
+
     private var aboutSection: some View {
         Section("关于") {
             HStack {
                 Text("版本")
                 Spacer()
-                Text("1.1.0 · 原生 SwiftUI · iPhone / iPad")
+                Text("1.2.4 · 原生 SwiftUI")
                     .foregroundStyle(AppTheme.textSecondary)
             }
             HStack {
