@@ -24,6 +24,15 @@ struct RecordRow: View {
                             .fill(Color.orange)
                             .frame(width: 5, height: 5)
                     }
+                    if record.splitGroup != nil {
+                        Text("拆分")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.accentSoft)
+                            .clipShape(Capsule())
+                    }
                 }
                 HStack(spacing: 5) {
                     if showsDate {
@@ -32,6 +41,10 @@ struct RecordRow: View {
                     Text("· \(record.member)")
                     if !record.note.isEmpty {
                         Text("· \(record.note)")
+                            .lineLimit(1)
+                    }
+                    if !record.groupNote.isEmpty && record.groupNote != record.note {
+                        Text("· \(record.groupNote)")
                             .lineLimit(1)
                     }
                 }
