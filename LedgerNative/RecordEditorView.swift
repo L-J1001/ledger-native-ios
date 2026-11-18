@@ -20,6 +20,7 @@ struct RecordEditorView: View {
     @State private var showTaxonomy = false
     @State private var splitEnabled = false
     @State private var splitRows: [SplitDraft] = [SplitDraft()]
+    @State private var didLoadSplitRows = false
     @FocusState private var amountFocused: Bool
 
     private struct SplitDraft: Identifiable {
@@ -69,6 +70,7 @@ struct RecordEditorView: View {
             .onAppear {
                 if editing == nil { amountFocused = true }
                 normalizeCategory()
+                loadSplitRowsIfNeeded()
             }
             .navigationTitle(editing == nil ? "记一笔" : "编辑账目")
             .navigationBarTitleDisplayMode(.inline)
@@ -403,6 +405,20 @@ struct RecordEditorView: View {
         }
     }
 
+    private func loadSplitRowsIfNeeded() {
+        guard !didLoadSplitRows, let editing, let group = editing.splitGroup else { return }
+        didLoadSplitRows = true
+        let siblings = store.records
+            .filter { $0.bookUid == store.writeBookID && $0.splitGroup == group }
+            .sorted { $0.id < $1.id }
+        guard !siblings.isEmpty else { return }
+        splitRows = siblings.map {
+            SplitDraft(category: $0.category,
+                       amountText: String(format: "%.2f", $0.amountYuan),
+                       note: $0.note)
+        }
+    }
+
     private func save(continueAfter: Bool) {
         if splitEnabled {
             saveSplit(continueAfter: continueAfter)
@@ -444,12 +460,17 @@ struct RecordEditorView: View {
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
             member: member,
             account: account,
-            groupNote: editing?.groupNote ?? "",
-            splitGroup: editing?.splitGroup,
-            excludeTotal: editing?.excludeTotal ?? false,
+            groupNote: "",
+            splitGroup: nil,
+            excludeTotal: false,
             updatedAt: nowMillis(),
             pending: true
         )
+        if let editing, let oldGroup = editing.splitGroup {
+            store.records
+                .filter { $0.bookUid == store.writeBookID && $0.splitGroup == oldGroup && $0.id != record.id }
+                .forEach(store.delete)
+        }
         store.upsert(record)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         amountFocused = false
@@ -503,6 +524,11 @@ struct RecordEditorView: View {
         }
 
         let group = editing?.splitGroup ?? "split-\(ULID.generate())"
+        if let editing, let oldGroup = editing.splitGroup {
+            store.records
+                .filter { $0.bookUid == store.writeBookID && $0.splitGroup == oldGroup }
+                .forEach(store.delete)
+        }
         for (index, item) in parsed.enumerated() {
             let row = item.0
             let cents = item.1
