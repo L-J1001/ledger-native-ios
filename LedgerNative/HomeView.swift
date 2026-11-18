@@ -184,7 +184,7 @@ struct HomeView: View {
                 HStack {
                     Text("已用 \(money(store.monthExpenseCents))")
                     Spacer()
-                    Text(store.monthBudgetRatio > 1 ? "超支 \(money(store.monthExpenseCents - store.monthlyBudgetCents))" : "剩余 \(money(store.monthlyBudgetRemainingCents))")
+                    Text(store.monthBudgetRatio > 1 ? "超支 \(money(store.monthExpenseCents - store.monthlyBudgetCents))" : "剩余 \(money(store.monthBudgetRemainingCents))")
                 }
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AppTheme.textSecondary)

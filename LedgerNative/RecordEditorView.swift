@@ -287,83 +287,96 @@ struct RecordEditorView: View {
 
     private var splitCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("明细 · \(splitRows.count) 笔")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.textSecondary)
-                Spacer()
-                Text("合计 ¥\(String(format: "%.2f", splitTotal))")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent)
-            }
+            splitHeader
             Text("一张票按分类拆开，金额自动合计；保存后会作为一组账单。")
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.textSecondary)
             ForEach($splitRows) { $row in
-                VStack(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Menu {
-                            ForEach(categories, id: \.self) { item in
-                                Button(item) { $row.category = item }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(row.category)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .semibold))
-                            }
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(AppTheme.grouped)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        }
-                        TextField("0.00", text: $row.amountText)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .monospacedDigit()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 7)
-                            .background(AppTheme.grouped)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .frame(width: 92)
-                        Button {
-                            splitRows.removeAll { $0.id == row.id }
-                            if splitRows.isEmpty { splitRows = [SplitDraft()] }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 15))
-                                .foregroundStyle(AppTheme.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    TextField("明细备注（选填）", text: $row.note)
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .background(AppTheme.grouped)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-                .padding(10)
-                .background(AppTheme.card)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppTheme.hairline, lineWidth: 0.5))
+                splitRow(row: $row)
             }
-            Button {
-                splitRows.append(SplitDraft(category: categories.first ?? "其他"))
-            } label: {
-                Label("添加一行", systemImage: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(AppTheme.accentSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .buttonStyle(.plain)
+            addSplitRowButton
         }
         .cardStyle(padding: 14)
+    }
+
+    private var splitHeader: some View {
+        HStack {
+            Text("明细 · \(splitRows.count) 笔")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.textSecondary)
+            Spacer()
+            Text("合计 ¥\(String(format: "%.2f", splitTotal))")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.accent)
+        }
+    }
+
+    @ViewBuilder
+    private func splitRow(row: Binding<SplitDraft>) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(categories, id: \.self) { item in
+                        Button(item) { row.wrappedValue.category = item }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(row.wrappedValue.category)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.grouped)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+                TextField("0.00", text: row.amountText)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background(AppTheme.grouped)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 92)
+                Button {
+                    splitRows.removeAll { $0.id == row.wrappedValue.id }
+                    if splitRows.isEmpty { splitRows = [SplitDraft()] }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            TextField("明细备注（选填）", text: row.note)
+                .font(.system(size: 12))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(AppTheme.grouped)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .padding(10)
+        .background(AppTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppTheme.hairline, lineWidth: 0.5))
+    }
+
+    private var addSplitRowButton: some View {
+        Button {
+            splitRows.append(SplitDraft(category: categories.first ?? "其他"))
+        } label: {
+            Label("添加一行", systemImage: "plus")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(AppTheme.accentSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var noteCard: some View {
