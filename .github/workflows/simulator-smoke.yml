@@ -21,19 +21,22 @@ jobs:
             -scheme LedgerNative \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/Sim \
             CODE_SIGNING_ALLOWED=NO \
             build
       - name: Launch and screenshot
         run: |
           set -euo pipefail
-          xcrun simctl boot "iPhone 16" || true
-          xcrun simctl bootstatus "iPhone 16" -b
-          xcrun simctl install booted build/Sim/Build/Products/Debug-iphonesimulator/LedgerNative.app
-          xcrun simctl launch booted com.ll205.ledgernative
+          xcrun simctl list devices available
+          UDID=$(xcrun simctl list devices available | sed -nE 's/.*iPhone.*\(([0-9A-F-]{36})\).*/\1/p' | head -1)
+          test -n "$UDID"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/Sim/Build/Products/Debug-iphonesimulator/LedgerNative.app
+          xcrun simctl launch "$UDID" com.ll205.ledgernative
           sleep 3
-          xcrun simctl io booted screenshot build/smoke.png
+          xcrun simctl io "$UDID" screenshot build/smoke.png
           ls -lh build/smoke.png
       - name: Upload screenshot
         uses: actions/upload-artifact@v4
