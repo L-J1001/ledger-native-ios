@@ -11,12 +11,23 @@ final class LedgerStore: ObservableObject {
     @Published private(set) var lastError: String?
     @Published private(set) var lastSyncAt: Date?
 
+    @Published var customMembers: [String] = []
+    @Published var customCategories: [String] = []
+    @Published var customAccounts: [String] = []
+    @Published var monthlyBudgetCents: Int = 0
+
     private let persistence = Persistence()
     private let sync = SyncService.shared
+    private let defaults = UserDefaults.standard
     private var cursor: Int64 = 0
     private var selectedBookID: String?
     private var deviceID: String = ""
     private var token: String?
+
+    private let membersKey = "ledger.preferences.members"
+    private let categoriesKey = "ledger.preferences.categories"
+    private let accountsKey = "ledger.preferences.accounts"
+    private let budgetKey = "ledger.preferences.budgetCents"
 
     init() {
         if let saved = persistence.load() {
@@ -29,6 +40,11 @@ final class LedgerStore: ObservableObject {
             deviceID = saved.deviceID
             lastSyncAt = saved.lastSyncAt
         }
+
+        customMembers = defaults.stringArray(forKey: membersKey) ?? ["我", "家人", "共同"]
+        customCategories = defaults.stringArray(forKey: categoriesKey) ?? []
+        customAccounts = defaults.stringArray(forKey: accountsKey) ?? ["现金", "微信", "支付宝", "银行卡"]
+        monthlyBudgetCents = defaults.integer(forKey: budgetKey)
 
         if books.isEmpty {
             let defaultBook = LedgerBook(id: "book-local", name: "我的账本")
@@ -83,6 +99,15 @@ final class LedgerStore: ObservableObject {
         monthRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
     }
 
+    var monthBudgetRemainingCents: Int {
+        max(0, monthlyBudgetCents - monthExpenseCents)
+    }
+
+    var monthBudgetRatio: Double {
+        guard monthlyBudgetCents > 0 else { return 0 }
+        return min(1.5, Double(monthExpenseCents) / Double(monthlyBudgetCents))
+    }
+
     var recentRecords: [LedgerRecord] {
         records.filter { $0.bookUid == writeBookID }
             .sorted { lhs, rhs in
@@ -91,8 +116,32 @@ final class LedgerStore: ObservableObject {
             }
     }
 
+    var allMembers: [String] {
+        let used = records.map { $0.member }.filter { !$0.isEmpty }
+        return Array(Set(customMembers + used + ["我"])).sorted { $0.localizedCompare($1) == .orderedAscending }
+    }
+
+    var allAccounts: [String] {
+        let used = records.map { $0.account }.filter { !$0.isEmpty }
+        return Array(Set(customAccounts + used)).sorted { $0.localizedCompare($1) == .orderedAscending }
+    }
+
+    func categories(for direction: Direction) -> [String] {
+        let used = records.filter { $0.direction == direction }.map { $0.category }.filter { !$0.isEmpty }
+        let base = direction == .expense
+            ? ["餐饮", "交通", "购物", "居住", "娱乐", "医疗", "学习", "人情", "其他"]
+            : ["工资", "兼职", "理财", "红包", "报销", "其他"]
+        let custom = customCategories
+        return Array(Set(base + custom + used)).sorted { $0.localizedCompare($1) == .orderedAscending }
+    }
+
     func records(for bookID: String) -> [LedgerRecord] {
         records.filter { $0.bookUid == bookID }.sorted { $0.date > $1.date }
+    }
+
+    func records(inMonth monthKey: String, bookID: String? = nil) -> [LedgerRecord] {
+        records.filter { $0.bookUid == (bookID ?? writeBookID) && $0.monthKey == monthKey }
+            .sorted { $0.date > $1.date }
     }
 
     func monthLabel() -> String {
@@ -105,6 +154,47 @@ final class LedgerStore: ObservableObject {
     func selectBook(_ id: String) {
         selectedBookID = id
         save()
+    }
+
+    func setBudget(_ cents: Int) {
+        monthlyBudgetCents = max(0, cents)
+        defaults.set(monthlyBudgetCents, forKey: budgetKey)
+    }
+
+    func addMember(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !customMembers.contains(trimmed) else { return }
+        customMembers.append(trimmed)
+        savePreferences()
+    }
+
+    func removeMember(_ value: String) {
+        customMembers.removeAll { $0 == value }
+        savePreferences()
+    }
+
+    func addCategory(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !customCategories.contains(trimmed) else { return }
+        customCategories.append(trimmed)
+        savePreferences()
+    }
+
+    func removeCategory(_ value: String) {
+        customCategories.removeAll { $0 == value }
+        savePreferences()
+    }
+
+    func addAccount(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !customAccounts.contains(trimmed) else { return }
+        customAccounts.append(trimmed)
+        savePreferences()
+    }
+
+    func removeAccount(_ value: String) {
+        customAccounts.removeAll { $0 == value }
+        savePreferences()
     }
 
     func upsert(_ record: LedgerRecord) {
@@ -179,7 +269,6 @@ final class LedgerStore: ObservableObject {
                 selectedBookID = book.id
             }
 
-            // 登录前在本地记的账，迁移到账号的真实 book_uid，避免推到一个云端不存在的账本。
             let localID = "book-local"
             for i in records.indices where records[i].bookUid == localID {
                 records[i].bookUid = response.bookUid
@@ -296,6 +385,12 @@ final class LedgerStore: ObservableObject {
                 }.joined(separator: ",")
             }
         return ([header] + rows).joined(separator: "\n")
+    }
+
+    private func savePreferences() {
+        defaults.set(customMembers, forKey: membersKey)
+        defaults.set(customCategories, forKey: categoriesKey)
+        defaults.set(customAccounts, forKey: accountsKey)
     }
 
     private func save() {

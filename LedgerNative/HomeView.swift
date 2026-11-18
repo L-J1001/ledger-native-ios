@@ -2,50 +2,73 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: LedgerStore
+    @EnvironmentObject private var reminder: RenewalReminder
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showEditor = false
     @State private var editingRecord: LedgerRecord?
-    @State private var showLogin = false
+    @State private var showAccount = false
+    @State private var showBudget = false
+    @State private var showTaxonomy = false
+    @State private var showRecords = false
+
+    private var isWide: Bool { sizeClass == .regular }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 18) {
-                    header
-                    if !store.isLoggedIn {
-                        loginBanner
+                if isWide {
+                    HStack(alignment: .top, spacing: 20) {
+                        VStack(spacing: 18) {
+                            header
+                            hero
+                            quickActions
+                            budgetCard
+                        }
+                        .frame(maxWidth: .infinity)
+
+                        VStack(spacing: 18) {
+                            recentSection
+                            categorySection
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    BalanceHero(
-                        book: store.selectedBook,
-                        balanceCents: store.balanceCents,
-                        incomeCents: store.monthIncomeCents,
-                        expenseCents: store.monthExpenseCents,
-                        monthTitle: store.monthLabel()
-                    )
-                    quickActions
-                    recentSection
-                    categorySection
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    .padding(.bottom, 30)
+                } else {
+                    VStack(spacing: 18) {
+                        header
+                        hero
+                        quickActions
+                        budgetCard
+                        recentSection
+                        categorySection
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 4)
-                .padding(.bottom, 28)
             }
             .background(AppTheme.grouped.ignoresSafeArea())
             .scrollIndicators(.hidden)
-            .refreshable {
-                await store.syncNow()
-            }
+            .refreshable { await store.syncNow() }
             .sheet(isPresented: $showEditor) {
-                RecordEditorView()
-                    .environmentObject(store)
+                RecordEditorView().environmentObject(store)
             }
             .sheet(item: $editingRecord) { record in
-                RecordEditorView(record: record)
-                    .environmentObject(store)
+                RecordEditorView(record: record).environmentObject(store)
             }
-            .sheet(isPresented: $showLogin) {
-                LoginView()
-                    .environmentObject(store)
-                    .presentationDetents([.medium, .large])
+            .sheet(isPresented: $showAccount) {
+                AccountSheet().environmentObject(store)
+            }
+            .sheet(isPresented: $showBudget) {
+                NavigationStack { BudgetView().environmentObject(store) }
+            }
+            .sheet(isPresented: $showTaxonomy) {
+                NavigationStack { TaxonomyView().environmentObject(store) }
+            }
+            .sheet(isPresented: $showRecords) {
+                NavigationStack { RecordsView().environmentObject(store) }
             }
         }
     }
@@ -56,94 +79,137 @@ struct HomeView: View {
                 Text("记账本")
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                 Text(Date().formatted(.dateTime.month(.wide).day().weekday(.wide)))
-                    .font(.system(size: 12))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.textSecondary)
             }
             Spacer()
-            SyncBadge(isLoggedIn: store.isLoggedIn, isSyncing: store.isSyncing)
+            HStack(spacing: 8) {
+                Button { showAccount = true } label: {
+                    Image(systemName: store.isLoggedIn ? "person.crop.circle.fill" : "person.crop.circle")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(store.isLoggedIn ? AppTheme.accent : AppTheme.textSecondary)
+                        .frame(width: 36, height: 36)
+                        .background(AppTheme.card)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PressableButtonStyle())
+
+                SyncBadge(isLoggedIn: store.isLoggedIn, isSyncing: store.isSyncing)
+            }
         }
         .padding(.top, 6)
     }
 
-    private var loginBanner: some View {
-        Button {
-            showLogin = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "icloud.and.arrow.up")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent)
-                    .frame(width: 36, height: 36)
-                    .background(AppTheme.accentSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("登录后与桌面账本双向同步")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("手机记一笔，电脑上也能看到")
-                        .font(.system(size: 12))
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            .padding(14)
-            .background(AppTheme.card)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(AppTheme.accent.opacity(0.18), lineWidth: 0.8)
+    private var hero: some View {
+        VStack(spacing: 12) {
+            BalanceHero(
+                book: store.selectedBook,
+                balanceCents: store.balanceCents,
+                incomeCents: store.monthIncomeCents,
+                expenseCents: store.monthExpenseCents,
+                monthTitle: store.monthLabel()
             )
+            if reminder.daysRemaining <= 3 {
+                Button { showAccount = false; reminder.showAlert = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("签名还剩 \(reminder.daysRemaining) 天，点此查看续签提醒")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.gold)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.gold.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                }
+                .buttonStyle(PressableButtonStyle())
+            }
+        }
+    }
+
+    private var quickActions: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            quickTile("记一笔", icon: "plus.circle.fill", color: AppTheme.accent) { showEditor = true }
+            quickTile("成员分类", icon: "person.2.fill", color: AppTheme.income) { showTaxonomy = true }
+            quickTile("本月预算", icon: "gauge.with.dots.needle.50percent", color: AppTheme.gold) { showBudget = true }
+            quickTile("我的账号", icon: "person.crop.circle", color: AppTheme.expense) { showAccount = true }
+        }
+    }
+
+    private func quickTile(_ title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 38, height: 38)
+                    .background(color.opacity(0.11))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .background(AppTheme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AppTheme.hairline, lineWidth: 0.5))
         }
         .buttonStyle(PressableButtonStyle())
     }
 
-    private var quickActions: some View {
-        HStack(spacing: 12) {
-            Button {
-                showEditor = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus.circle.fill")
-                    Text("记一笔")
+    @ViewBuilder
+    private var budgetCard: some View {
+        if store.monthlyBudgetCents > 0 {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("本月预算")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                    Spacer()
+                    Text("\(Int(store.monthBudgetRatio * 100))%")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(store.monthBudgetRatio > 1 ? AppTheme.expense : AppTheme.accent)
                 }
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AppTheme.hairline)
+                        Capsule()
+                            .fill(store.monthBudgetRatio > 1 ? AppTheme.expense : AppTheme.accent)
+                            .frame(width: max(6, proxy.size.width * min(1, store.monthBudgetRatio)))
+                    }
+                }
+                .frame(height: 8)
+                HStack {
+                    Text("已用 \(money(store.monthExpenseCents))")
+                    Spacer()
+                    Text(store.monthBudgetRatio > 1 ? "超支 \(money(store.monthExpenseCents - store.monthlyBudgetCents))" : "剩余 \(money(store.monthlyBudgetRemainingCents))")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppTheme.textSecondary)
             }
-            .buttonStyle(PrimaryButtonStyle())
-
-            Button {
-                showLogin = true
-            } label: {
-                Image(systemName: "person.crop.circle")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-                    .frame(width: 52, height: 50)
-                    .background(AppTheme.card)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(AppTheme.hairline, lineWidth: 0.5)
-                    )
-            }
-            .buttonStyle(PressableButtonStyle())
+            .cardStyle(padding: 15)
         }
     }
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionTitle(title: "最近记录")
+            SectionTitle(title: "最近记录", action: "查看全部") {
+                showRecords = true
+            }
             if store.recentRecords.isEmpty {
                 emptyRecords
             } else {
                 VStack(spacing: 0) {
-                    ForEach(store.recentRecords.prefix(6)) { record in
-                        Button {
-                            editingRecord = record
-                        } label: {
+                    ForEach(store.recentRecords.prefix(isWide ? 8 : 6)) { record in
+                        Button { editingRecord = record } label: {
                             RecordRow(record: record)
                         }
                         .buttonStyle(.plain)
-                        Divider().overlay(AppTheme.hairline)
+                        if record.id != store.recentRecords.prefix(isWide ? 8 : 6).last?.id {
+                            Divider().overlay(AppTheme.hairline)
+                        }
                     }
                 }
                 .cardStyle(padding: 14)
@@ -154,16 +220,16 @@ struct HomeView: View {
     private var emptyRecords: some View {
         VStack(spacing: 10) {
             Image(systemName: "tray")
-                .font(.system(size: 26))
+                .font(.system(size: 28))
                 .foregroundStyle(AppTheme.textSecondary)
             Text("还没有记录")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
             Text("点上面的「记一笔」开始")
                 .font(.system(size: 12))
                 .foregroundStyle(AppTheme.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 26)
         .cardStyle(padding: 0)
     }
 
@@ -187,15 +253,9 @@ struct HomeView: View {
                                 .lineLimit(1)
                             GeometryReader { proxy in
                                 ZStack(alignment: .leading) {
+                                    Capsule().fill(AppTheme.hairline)
                                     Capsule()
-                                        .fill(AppTheme.hairline)
-                                    Capsule()
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [AppTheme.accent.opacity(0.75), AppTheme.accent],
-                                                startPoint: .leading, endPoint: .trailing
-                                            )
-                                        )
+                                        .fill(LinearGradient(colors: [AppTheme.accent.opacity(0.75), AppTheme.accent], startPoint: .leading, endPoint: .trailing))
                                         .frame(width: max(6, proxy.size.width * slice.ratio))
                                 }
                             }
@@ -204,7 +264,7 @@ struct HomeView: View {
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(AppTheme.textSecondary)
                                 .monospacedDigit()
-                                .frame(width: 78, alignment: .trailing)
+                                .frame(width: 76, alignment: .trailing)
                         }
                     }
                 }

@@ -29,6 +29,7 @@ struct RecordRow: View {
                     if showsDate {
                         Text(shortDate(record.date))
                     }
+                    Text("· \(record.member)")
                     if !record.note.isEmpty {
                         Text("· \(record.note)")
                             .lineLimit(1)
