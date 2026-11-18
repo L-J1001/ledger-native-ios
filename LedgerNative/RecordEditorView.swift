@@ -302,7 +302,7 @@ struct RecordEditorView: View {
                     HStack(spacing: 8) {
                         Menu {
                             ForEach(categories, id: \.self) { item in
-                                Button(item) { row.category = item }
+                                Button(item) { $row.category = item }
                             }
                         } label: {
                             HStack(spacing: 4) {
