@@ -447,29 +447,44 @@ struct StatsView: View {
     /// 按天翻页一次走一天（趋势图仍固定显示含今天在内的 7 天，翻页只挪汇总日）。
     private var dayStep: Int { 1 }
 
-    /// 按天时的趋势窗口右端：只要所选日还落在「含今天最近 7 天」里，右端就固定是今天，
-    /// 这样一天一天往回翻时柱状图不会跟着整体平移；只有翻到更早的日期才把窗口挪过去。
+    /// 趋势窗口右端：只要所选区间还落在「含今天的那段窗口」里，右端就钉在今天所在的那一格，
+    /// 往回翻页时柱状图不会跟着整体平移；只有翻到窗口之外，整排柱子才挪过去。
     private var dayWindowEnd: Date {
         let recentStart = cal.date(byAdding: .day, value: -6, to: today) ?? today
         return clampedAnchor < recentStart ? clampedAnchor : today
     }
 
-    private var windowStart: Date {
+    private var monthWindowEnd: Date {
+        let recentStart = cal.date(byAdding: .month, value: -5, to: startOfMonth(today)) ?? startOfMonth(today)
+        return clampedAnchor < recentStart ? startOfMonth(clampedAnchor) : startOfMonth(today)
+    }
+
+    private var yearWindowEnd: Date {
+        let recentStart = cal.date(byAdding: .year, value: -4, to: startOfYear(today)) ?? startOfYear(today)
+        return clampedAnchor < recentStart ? startOfYear(clampedAnchor) : startOfYear(today)
+    }
+
+    /// 窗口右端所落在的那一格（日 / 月 / 年的月末）
+    private var windowEnd: Date {
         switch range {
-        case .day: return cal.date(byAdding: .day, value: -6, to: dayWindowEnd) ?? dayWindowEnd
-        case .month: return cal.date(byAdding: .month, value: -5, to: periodStartDate) ?? periodStartDate
-        case .year: return cal.date(byAdding: .year, value: -4, to: periodStartDate) ?? periodStartDate
+        case .day: return dayWindowEnd
+        case .month: return min(endOfMonth(monthWindowEnd), today)
+        case .year: return min(endOfYear(yearWindowEnd), today)
         }
     }
 
-    private var windowEnd: Date { range == .day ? dayWindowEnd : periodEnd }
+    private var windowStart: Date {
+        switch range {
+        case .day: return cal.date(byAdding: .day, value: -6, to: dayWindowEnd) ?? dayWindowEnd
+        case .month: return cal.date(byAdding: .month, value: -5, to: monthWindowEnd) ?? monthWindowEnd
+        case .year: return cal.date(byAdding: .year, value: -4, to: yearWindowEnd) ?? yearWindowEnd
+        }
+    }
 
     private var windowNote: String {
         switch range {
         case .day: return "近 7 天"
-        case .month:
-            let months = (cal.dateComponents([.month], from: windowStart, to: windowEnd).month ?? 5) + 1
-            return "近 \(min(6, max(1, months))) 个月"
+        case .month: return "近 6 个月"
         case .year: return "近 5 年"
         }
     }
