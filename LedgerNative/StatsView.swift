@@ -249,7 +249,7 @@ struct StatsView: View {
                 }
                 .frame(height: 190)
                 .offset(x: dragX)
-                .opacity(1 - min(0.32, abs(dragX) / 320 * 0.5))
+                .opacity(1.0 - Double(min(CGFloat(0.32), abs(dragX) / CGFloat(320) * 0.5)))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 12)
                         .onChanged { value in
