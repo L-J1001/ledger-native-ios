@@ -15,6 +15,8 @@ struct LedgerBook: Codable, Identifiable, Hashable {
     var openingCents: Int
     var colorHex: String
     var updatedAt: Int64
+    /// 桌面端随账本元数据一起推上来的成员/分类/账户；旧版云端没有这个字段。
+    var taxonomy: BookTaxonomy?
 
     enum CodingKeys: String, CodingKey {
         case id = "book_uid"
@@ -22,15 +24,18 @@ struct LedgerBook: Codable, Identifiable, Hashable {
         case openingCents = "opening_cents"
         case colorHex = "color"
         case updatedAt = "updated_at"
+        case taxonomy
     }
 
     init(id: String, name: String, openingCents: Int = 0,
-         colorHex: String = "#3F7CFF", updatedAt: Int64 = 0) {
+         colorHex: String = "#3F7CFF", updatedAt: Int64 = 0,
+         taxonomy: BookTaxonomy? = nil) {
         self.id = id
         self.name = name
         self.openingCents = openingCents
         self.colorHex = colorHex
         self.updatedAt = updatedAt
+        self.taxonomy = taxonomy
     }
 
     init(from decoder: Decoder) throws {
@@ -40,6 +45,7 @@ struct LedgerBook: Codable, Identifiable, Hashable {
         openingCents = try c.decodeIfPresent(Int.self, forKey: .openingCents) ?? 0
         colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex) ?? "#3F7CFF"
         updatedAt = try c.decodeIfPresent(Int64.self, forKey: .updatedAt) ?? 0
+        taxonomy = try c.decodeIfPresent(BookTaxonomy.self, forKey: .taxonomy)
     }
 }
 
@@ -62,9 +68,10 @@ struct RemotePayload: Codable {
     var name: String? = nil
     var openingCents: Int? = nil
     var color: String? = nil
+    var taxonomy: BookTaxonomy? = nil
 
     enum CodingKeys: String, CodingKey {
-        case schema, origin, amount, direction, member, date, note, category, account, name, color
+        case schema, origin, amount, direction, member, date, note, category, account, name, color, taxonomy
         case amountCents = "amount_cents"
         case groupNote = "group_note"
         case splitGroup = "split_group"
@@ -73,12 +80,14 @@ struct RemotePayload: Codable {
         case openingCents = "opening_cents"
     }
 
-    static func book(name: String, openingCents: Int, color: String) -> RemotePayload {
+    static func book(name: String, openingCents: Int, color: String,
+                     taxonomy: BookTaxonomy? = nil) -> RemotePayload {
         RemotePayload(schema: nil, origin: "ios", amount: nil, amountCents: nil,
                       direction: nil, member: nil, date: nil, note: nil,
                       category: nil, account: nil, groupNote: nil, splitGroup: nil,
                       excludeTotal: nil, localId: nil, name: name,
-                      openingCents: max(0, openingCents), color: color)
+                      openingCents: max(0, openingCents), color: color,
+                      taxonomy: taxonomy)
     }
 }
 
@@ -304,13 +313,20 @@ struct RecordGroup: Identifiable, Hashable {
     var title: String {
         if !isSplit { return first.category.isEmpty ? "未分类" : first.category }
         let note = first.groupNote.trimmingCharacters(in: .whitespacesAndNewlines)
-        return note.isEmpty ? "拆分 \(records.count) 笔" : note
+        if !note.isEmpty { return note }
+        // 桌面端把同一次拆分折叠成「一笔」，主行显示记账人；
+        // 手机端沿用同一口径，不再把每一行明细铺成独立流水。
+        let member = first.member.trimmingCharacters(in: .whitespacesAndNewlines)
+        return member.isEmpty ? "拆分 \(records.count) 笔" : "\(member) · \(records.count) 笔"
     }
     var subtitle: String {
         if isSplit {
             let cats = records.map(\.category).filter { !$0.isEmpty }
             let joined = cats.prefix(3).joined(separator: " · ")
-            return "拆分 \(records.count) 笔" + (joined.isEmpty ? "" : " · \(joined)")
+            var parts = ["拆分 \(records.count) 笔"]
+            if !joined.isEmpty { parts.append(joined) }
+            if cats.count > 3 { parts.append("等 \(cats.count) 类") }
+            return parts.joined(separator: " · ")
         }
         return first.note
     }

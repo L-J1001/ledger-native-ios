@@ -287,7 +287,7 @@ struct SettingsView: View {
             HStack {
                 Text("版本")
                 Spacer()
-                Text("1.2.4 · 原生 SwiftUI")
+                Text("1.2.6 · 原生 SwiftUI")
                     .foregroundStyle(AppTheme.textSecondary)
             }
             HStack {

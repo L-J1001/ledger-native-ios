@@ -102,7 +102,7 @@ struct FeedbackView: View {
             "contact": contact.trimmingCharacters(in: .whitespacesAndNewlines),
             "website": "",
             "meta": [
-                "version": "1.2.4",
+                "version": "1.2.6",
                 "os": "iOS",
                 "client": "ios-native",
                 "page": "settings_feedback"

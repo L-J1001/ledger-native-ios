@@ -43,7 +43,9 @@ struct RecordEditorView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if !splitEnabled {
+                    if splitEnabled {
+                        splitAmountCard
+                    } else {
                         amountCard
                     }
                     directionPicker
@@ -120,6 +122,12 @@ struct RecordEditorView: View {
                           amountText: String(format: "%.2f", $0.amountYuan),
                           note: $0.note)
             }
+            // 整笔金额 = 各明细之和。编辑拆分账时如果只记下第一条金额，
+            // 用户取消拆分后会把整笔金额悄悄改成第一条的金额、并删掉其余明细。
+            let total = list.reduce(0) { $0 + $1.amountCents }
+            if total > 0 {
+                amountText = String(format: "%.2f", Double(total) / 100.0)
+            }
             groupNote = editing.groupNote
             member = editing.member
             account = editing.account
@@ -160,6 +168,37 @@ struct RecordEditorView: View {
         .cardStyle(padding: 18)
     }
 
+    private var splitAmountCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("整笔金额")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.textSecondary)
+                Spacer()
+                Text("\(splitLines.count) 条明细")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+            Text(money(splitTotalCents))
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.accent)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Divider().overlay(AppTheme.hairline)
+            HStack {
+                Text("合计以明细为准，和桌面端同一笔账")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.textSecondary)
+                Spacer()
+                Text(store.selectedBook?.name ?? "我的账本")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+            }
+        }
+        .cardStyle(padding: 18)
+    }
+
     private var directionPicker: some View {
         Picker("方向", selection: $direction) {
             Text("支出").tag(Direction.expense)
@@ -193,11 +232,20 @@ struct RecordEditorView: View {
                                         amountText: amountText,
                                         note: note)]
             } else if !enabled {
-                groupNote = ""
-                if splitLines.count == 1 {
-                    amountText = splitLines[0].amountText
-                    category = splitLines[0].category
+                let total = splitTotalCents
+                if total > 0 {
+                    amountText = String(format: "%.2f", Double(total) / 100.0)
                 }
+                if let first = splitLines.first {
+                    category = first.category
+                    if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        note = first.note
+                    }
+                }
+                if !groupNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    note = groupNote
+                }
+                groupNote = ""
             }
         }
     }
@@ -306,7 +354,7 @@ struct RecordEditorView: View {
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
                         Picker("分类", selection: $line.category) {
-                            ForEach(categories, id: \.self) { item in
+                            ForEach(splitCategories(line.category), id: \.self) { item in
                                 Text(item).tag(item)
                             }
                         }
@@ -432,6 +480,14 @@ struct RecordEditorView: View {
         return base
     }
 
+    /// 明细行也要保留自己原来的分类：桌面端隐藏/改名后，历史账目不能因此
+    /// 显示成空白，更不能在保存时被悄悄改成第一项。
+    private func splitCategories(_ current: String) -> [String] {
+        var base = store.categories(for: direction)
+        if !current.isEmpty, !base.contains(current) { base.insert(current, at: 0) }
+        return base
+    }
+
     private var memberChoices: [String] {
         var base = store.memberOptions
         if !member.isEmpty, !base.contains(member) { base.insert(member, at: 0) }
@@ -540,7 +596,7 @@ struct RecordEditorView: View {
         let now = nowMillis()
         let newRecords = splitLines.enumerated().map { index, line -> LedgerRecord in
             LedgerRecord(
-                id: index == 0 && editing != nil ? editing!.id : ULID.generate(),
+                id: index < old.count ? old[index].id : ULID.generate(),
                 bookUid: store.writeBookID,
                 date: dateString(date),
                 direction: direction,
