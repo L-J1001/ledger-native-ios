@@ -444,8 +444,8 @@ struct StatsView: View {
     private var periodStartDate: Date { periodStart(clampedAnchor) }
     private var periodEnd: Date { max(periodStartDate, periodEndDate(clampedAnchor)) }
     private var periodDays: Int { max(1, (cal.dateComponents([.day], from: periodStartDate, to: periodEnd).day ?? 0) + 1) }
-    /// 按天翻页一次走一周：一天一天点太累，双击日期或胶囊可以直接回今天。
-    private var dayStep: Int { 7 }
+    /// 按天翻页一次走一天（趋势图仍固定显示含今天在内的 7 天，翻页只挪汇总日）。
+    private var dayStep: Int { 1 }
 
     private var windowStart: Date {
         switch range {
