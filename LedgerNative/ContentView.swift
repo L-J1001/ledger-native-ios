@@ -37,6 +37,7 @@ struct ContentView: View {
         }
         .tint(AppTheme.accent)
         .task {
+            RenewalReminder.configure()
             await store.syncNow()
         }
         .onChange(of: scenePhase) { _, newPhase in

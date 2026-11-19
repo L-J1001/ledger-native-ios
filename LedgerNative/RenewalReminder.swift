@@ -1,104 +1,64 @@
 import Foundation
-import SwiftUI
 import UserNotifications
 
-final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    static let shared = NotificationDelegate()
+/// 自签名 IPA 7 天到期提醒。
+///
+/// Sideloadly 负责实际续签；App 只负责在到期前第 5/6/7 天各发一条本地通知，
+/// 提醒打开电脑上的 Sideloadly。每次覆盖安装后的首次启动会以当前版本为锚点
+/// 重新排期，避免同一条提醒在多次升级后反复堆积。
+enum RenewalReminder {
+    private static let identifiers = ["ledger.renew.5", "ledger.renew.6", "ledger.renew.7"]
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                willPresent notification: UNNotification,
-                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
-    }
-}
-
-@MainActor
-final class RenewalReminder: ObservableObject {
-    @Published var showAlert = false
-    @Published var daysRemaining = 7
-    @Published var expiryDate = Date().addingTimeInterval(7 * 86_400)
-
-    private let startKey = "ledger.renewal.installDate"
-    private let versionKey = "ledger.renewal.appVersion"
-    private let alertDayKey = "ledger.renewal.lastAlertDay"
-
-    func bootstrap() {
+    static func configure() {
         let defaults = UserDefaults.standard
-        let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0"
-        let storedVersion = defaults.string(forKey: versionKey) ?? ""
-        if defaults.double(forKey: startKey) <= 0 || storedVersion != version {
-            defaults.set(Date().timeIntervalSince1970, forKey: startKey)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let versionKey = "renewal_anchor_version"
+        let anchorKey = "renewal_anchor_date"
+
+        if defaults.string(forKey: versionKey) != version
+            || defaults.object(forKey: anchorKey) == nil {
             defaults.set(version, forKey: versionKey)
+            defaults.set(Date(), forKey: anchorKey)
         }
-        refresh()
-        requestAuthorization()
-        scheduleNotifications()
-        maybePresentLaunchAlert()
-    }
+        let anchor = defaults.object(forKey: anchorKey) as? Date ?? Date()
 
-    func refresh() {
-        let defaults = UserDefaults.standard
-        let start = defaults.double(forKey: startKey) > 0
-            ? Date(timeIntervalSince1970: defaults.double(forKey: startKey))
-            : Date()
-        expiryDate = start.addingTimeInterval(7 * 86_400)
-        let seconds = expiryDate.timeIntervalSinceNow
-        daysRemaining = max(0, Int(ceil(seconds / 86_400)))
-    }
-
-    func markRenewed() {
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: startKey)
-        refresh()
-        scheduleNotifications()
-        showAlert = false
-    }
-
-    private func requestAuthorization() {
-        UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
-    }
-
-    private func scheduleNotifications() {
         let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: ["renewal-5", "renewal-6", "renewal-7"])
+        Task {
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            guard granted else { return }
 
-        let calendar = Calendar.current
-        let start = UserDefaults.standard.double(forKey: startKey) > 0
-            ? Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: startKey))
-            : Date()
+            center.removePendingNotificationRequests(withIdentifiers: identifiers)
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
 
-        for day in 5...7 {
-            guard let dayDate = calendar.date(byAdding: .day, value: day, to: start) else { continue }
-            var components = calendar.dateComponents([.year, .month, .day], from: dayDate)
-            components.hour = 9
-            components.minute = 0
-            guard let fireDate = calendar.date(from: components) else { continue }
-            let interval = max(5, fireDate.timeIntervalSinceNow)
+            let calendar = Calendar.current
+            for (index, offset) in [5, 6, 7].enumerated() {
+                guard let day = calendar.date(byAdding: .day, value: offset, to: anchor) else { continue }
+                let daysLeft = 7 - offset
+                let body: String
+                switch daysLeft {
+                case 2:
+                    body = "记账本签名还剩 2 天。请打开电脑上的 Sideloadly，用数据线连接 iPhone 完成自动续签。"
+                case 1:
+                    body = "记账本签名只剩 1 天。今晚记得打开 Sideloadly 连接 iPhone 续签，避免明天打不开。"
+                default:
+                    body = "记账本签名今天到期。请尽快用 Sideloadly 连接 iPhone 续签，否则 App 将无法打开。"
+                }
 
-            let content = UNMutableNotificationContent()
-            content.title = "记账本需要续签"
-            content.body = day == 7
-                ? "免费签名今天到期，App 可能马上打不开。请打开电脑上的 Sideloadly 完成续签。"
-                : "免费签名还有 \(7 - day) 天到期。请在电脑上打开 Sideloadly，手机和电脑保持同一 Wi‑Fi。"
-            content.sound = .default
-            content.badge = 1
+                var components = calendar.dateComponents([.year, .month, .day], from: day)
+                components.hour = 10
+                components.minute = 0
+                guard let fireDate = calendar.date(from: components), fireDate > Date() else { continue }
 
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-            let request = UNNotificationRequest(identifier: "renewal-\(day)", content: content, trigger: trigger)
-            center.add(request, withCompletionHandler: nil)
-        }
-    }
+                let content = UNMutableNotificationContent()
+                content.title = daysLeft == 0 ? "签名今天到期" : "该续签记账本了"
+                content.body = body
+                content.sound = .default
+                content.userInfo = ["daysLeft": daysLeft]
 
-    private func maybePresentLaunchAlert() {
-        guard daysRemaining <= 1 else { return }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: Date())
-        let defaults = UserDefaults.standard
-        if defaults.string(forKey: alertDayKey) != today {
-            defaults.set(today, forKey: alertDayKey)
-            showAlert = true
+                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                let request = UNNotificationRequest(identifier: identifiers[index], content: content, trigger: trigger)
+                try? await center.add(request)
+            }
         }
     }
 }
