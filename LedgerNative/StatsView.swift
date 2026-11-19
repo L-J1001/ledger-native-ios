@@ -3,7 +3,16 @@ import Charts
 
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
-    @State private var monthOffset = 0
+
+    private enum StatsRange: String, CaseIterable, Identifiable {
+        case week = "近 7 天"
+        case month = "近 1 个月"
+        case year = "近 1 年"
+        var id: String { rawValue }
+    }
+
+    @State private var range: StatsRange = .week
+    @State private var offset = 0
 
     private struct DayPoint: Identifiable {
         let id: String
@@ -23,7 +32,8 @@ struct StatsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
-                    monthHeader
+                    rangePicker
+                    periodHeader
                     summaryCard
                     factsCard
                     trendCard
@@ -40,10 +50,20 @@ struct StatsView: View {
         }
     }
 
-    private var monthHeader: some View {
+    private var rangePicker: some View {
+        Picker("统计范围", selection: $range) {
+            ForEach(StatsRange.allCases) { item in
+                Text(item.rawValue).tag(item)
+            }
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: range) { _, _ in offset = 0 }
+    }
+
+    private var periodHeader: some View {
         HStack {
             Button {
-                monthOffset -= 1
+                offset -= 1
             } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 14, weight: .semibold))
@@ -55,10 +75,10 @@ struct StatsView: View {
 
             Spacer()
             VStack(spacing: 3) {
-                Text(monthTitle)
+                Text(periodTitle)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                if monthOffset != 0 {
-                    Button("回到本月") { monthOffset = 0 }
+                if offset != 0 {
+                    Button("回到当前") { offset = 0 }
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(AppTheme.accent)
                         .buttonStyle(.plain)
@@ -67,15 +87,17 @@ struct StatsView: View {
             Spacer()
 
             Button {
-                monthOffset += 1
+                if offset < 0 { offset += 1 }
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 14, weight: .semibold))
                     .frame(width: 32, height: 32)
                     .background(AppTheme.card)
                     .clipShape(Circle())
+                    .opacity(offset < 0 ? 1 : 0.35)
             }
             .buttonStyle(PressableButtonStyle())
+            .disabled(offset >= 0)
         }
     }
 
@@ -107,8 +129,8 @@ struct StatsView: View {
 
     private var factsCard: some View {
         let facts: [(String, String, String)] = [
-            ("记账笔数", "\(monthRecords.count) 笔", "含拆分后的明细"),
-            ("日均支出", money(dailyExpenseCents), "按 \(monthDays) 天计"),
+            ("记账笔数", "\(periodRecords.count) 笔", "含拆分后的明细"),
+            ("日均支出", money(dailyExpenseCents), "按 \(periodDays) 天计"),
             ("最大单笔", money(maxSingleExpenseCents), maxSingleExpenseCategory),
             ("最常记", topMemberName, topMemberDetail)
         ]
@@ -147,13 +169,11 @@ struct StatsView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("最近 7 天")
+                    Text("收支趋势")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    if !weekRangeText.isEmpty {
-                        Text(weekRangeText)
-                            .font(.system(size: 10))
-                            .foregroundStyle(AppTheme.textSecondary)
-                    }
+                    Text("\(periodTitle) · \(range == .year ? "按月" : "按天")")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.textSecondary)
                 }
                 Spacer()
                 HStack(spacing: 8) {
@@ -162,14 +182,14 @@ struct StatsView: View {
                 }
             }
 
-            if dailyPoints.isEmpty {
-                Text("这个月还没有记录")
+            if trendTotal == 0 {
+                Text("这个区间还没有记录")
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
                 Chart {
-                    ForEach(dailyPoints) { point in
+                    ForEach(trendPoints) { point in
                         LineMark(
                             x: .value("日期", point.date),
                             y: .value("金额", Double(point.expense) / 100.0)
@@ -177,12 +197,7 @@ struct StatsView: View {
                         .foregroundStyle(AppTheme.expense)
                         .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                         .interpolationMethod(.catmullRom)
-
-                        PointMark(
-                            x: .value("日期", point.date),
-                            y: .value("金额", Double(point.expense) / 100.0)
-                        )
-                        .foregroundStyle(AppTheme.expense)
+                        .symbol(.circle)
                         .symbolSize(12)
 
                         LineMark(
@@ -192,13 +207,20 @@ struct StatsView: View {
                         .foregroundStyle(AppTheme.income)
                         .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                         .interpolationMethod(.catmullRom)
+                        .symbol(.circle)
+                        .symbolSize(12)
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .day, count: 1)) { value in
+                    AxisMarks { value in
                         AxisGridLine().foregroundStyle(AppTheme.hairline)
-                        AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
-                            .foregroundStyle(AppTheme.textSecondary)
+                        if range == .year {
+                            AxisValueLabel(format: .dateTime.month(.defaultDigits))
+                                .foregroundStyle(AppTheme.textSecondary)
+                        } else {
+                            AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
+                                .foregroundStyle(AppTheme.textSecondary)
+                        }
                     }
                 }
                 .chartYAxis {
@@ -229,7 +251,7 @@ struct StatsView: View {
                 .font(.system(size: 16, weight: .bold, design: .rounded))
 
             if categoryPoints.isEmpty {
-                Text("这个月还没有支出")
+                Text("这个区间还没有支出")
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
                     .frame(maxWidth: .infinity, minHeight: 90)
@@ -268,62 +290,108 @@ struct StatsView: View {
         .cardStyle(padding: 16)
     }
 
-    private var selectedMonthStart: Date {
-        let calendar = Calendar.current
-        let today = Date()
-        let startOfThisMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
-        return calendar.date(byAdding: .month, value: monthOffset, to: startOfThisMonth) ?? startOfThisMonth
+    /* ---------------- 区间与数据 ---------------- */
+
+    private var calendar: Calendar { Calendar.current }
+    private var today: Date { calendar.startOfDay(for: Date()) }
+
+    private var periodStart: Date {
+        switch range {
+        case .week:
+            return calendar.date(byAdding: .day, value: -6 - offset * 7, to: today) ?? today
+        case .month:
+            return calendar.date(byAdding: .month, value: -offset, to: startOfMonth(today)) ?? today
+        case .year:
+            return calendar.date(byAdding: .year, value: -offset, to: startOfYear(today)) ?? today
+        }
     }
 
-    private var monthKey: String {
-        String(dateString(selectedMonthStart).prefix(7))
+    private var periodEnd: Date {
+        switch range {
+        case .week:
+            return calendar.date(byAdding: .day, value: -offset * 7, to: today) ?? today
+        case .month:
+            if offset == 0 { return today }
+            return endOfMonth(periodStart)
+        case .year:
+            if offset == 0 { return today }
+            return endOfYear(periodStart)
+        }
     }
 
-    private var monthTitle: String {
+    private var periodDays: Int {
+        max(1, (calendar.dateComponents([.day], from: periodStart, to: periodEnd).day ?? 0) + 1)
+    }
+
+    private var periodTitle: String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy年M月"
-        return f.string(from: selectedMonthStart)
+        switch range {
+        case .week:
+            f.dateFormat = "M月d日"
+            return "\(f.string(from: periodStart)) – \(f.string(from: periodEnd))"
+        case .month:
+            f.dateFormat = "yyyy年M月"
+            return f.string(from: periodStart)
+        case .year:
+            return "\(calendar.component(.year, from: periodStart))年"
+        }
     }
 
-    private var monthRecords: [LedgerRecord] {
-        store.records.filter { $0.bookUid == store.writeBookID && $0.monthKey == monthKey }
+    private var startOfMonth: (Date) -> Date {
+        { date in
+            calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+        }
+    }
+
+    private var startOfYear: (Date) -> Date {
+        { date in
+            calendar.date(from: calendar.dateComponents([.year], from: date)) ?? date
+        }
+    }
+
+    private func endOfMonth(_ date: Date) -> Date {
+        calendar.date(byAdding: DateComponents(month: 1, day: -1), to: startOfMonth(date)) ?? date
+    }
+
+    private func endOfYear(_ date: Date) -> Date {
+        calendar.date(byAdding: DateComponents(year: 1, day: -1), to: startOfYear(date)) ?? date
+    }
+
+    private var periodRecords: [LedgerRecord] {
+        let start = dateString(periodStart)
+        let end = dateString(periodEnd)
+        return store.records.filter {
+            $0.bookUid == store.writeBookID && $0.date >= start && $0.date <= end
+        }
     }
 
     private var incomeCents: Int {
-        monthRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+        periodRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
     }
 
     private var expenseCents: Int {
-        monthRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
-    }
-
-    private var monthDays: Int {
-        let calendar = Calendar.current
-        if monthOffset == 0 {
-            return max(1, calendar.component(.day, from: Date()))
-        }
-        return calendar.range(of: .day, in: .month, for: selectedMonthStart)?.count ?? 30
+        periodRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
     }
 
     private var dailyExpenseCents: Int {
-        expenseCents / max(1, monthDays)
+        expenseCents / max(1, periodDays)
     }
 
     private var maxSingleExpense: LedgerRecord? {
-        monthRecords.filter { $0.direction == .expense }.max { $0.amountCents < $1.amountCents }
+        periodRecords.filter { $0.direction == .expense }.max { $0.amountCents < $1.amountCents }
     }
 
     private var maxSingleExpenseCents: Int { maxSingleExpense?.amountCents ?? 0 }
 
     private var maxSingleExpenseCategory: String {
-        guard let record = maxSingleExpense else { return "这个月还没有支出" }
+        guard let record = maxSingleExpense else { return "这个区间还没有支出" }
         let category = record.category.isEmpty ? "未分类" : record.category
         return "\(category) · \(shortDate(record.date))"
     }
 
     private var topMemberName: String {
-        let grouped = Dictionary(grouping: monthRecords.filter { !$0.member.isEmpty }, by: \.member)
+        let grouped = Dictionary(grouping: periodRecords.filter { !$0.member.isEmpty }, by: \.member)
         let top = grouped.max { lhs, rhs in
             if lhs.value.count != rhs.value.count { return lhs.value.count < rhs.value.count }
             return lhs.value.reduce(0) { $0 + $1.amountCents } < rhs.value.reduce(0) { $0 + $1.amountCents }
@@ -332,41 +400,52 @@ struct StatsView: View {
     }
 
     private var topMemberDetail: String {
-        let grouped = Dictionary(grouping: monthRecords.filter { !$0.member.isEmpty }, by: \.member)
+        let grouped = Dictionary(grouping: periodRecords.filter { !$0.member.isEmpty }, by: \.member)
         guard let top = grouped.max(by: { $0.value.count < $1.value.count }) else { return "还没有成员记录" }
         let amount = top.value.reduce(0) { $0 + $1.amountCents }
         return "\(top.value.count) 笔 · \(money(amount))"
     }
 
-    private var weekRangeText: String {
-        guard let first = dailyPoints.first, let last = dailyPoints.last else { return "" }
-        return "\(shortDate(dateString(first.date)))–\(shortDate(dateString(last.date)))"
+    private var trendTotal: Int {
+        trendPoints.reduce(0) { $0 + $1.expense + $1.income }
     }
 
-    private var dailyPoints: [DayPoint] {
-        let calendar = Calendar.current
-        // 「最近 7 天」必须属于当前查看的月份：
-        // 看本月时锚在今天；看历史月份时锚在那个月最后一天，而不是“今天往前 7 天”。
-        let anchor: Date
-        if monthOffset == 0 {
-            anchor = Date()
-        } else {
-            let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonthStart) ?? selectedMonthStart
-            anchor = calendar.date(byAdding: .day, value: -1, to: nextMonth) ?? selectedMonthStart
+    private var trendPoints: [DayPoint] {
+        let records = periodRecords
+        if range == .year {
+            let firstMonth = calendar.component(.month, from: periodStart)
+            let lastMonth = calendar.component(.month, from: periodEnd)
+            let year = calendar.component(.year, from: periodStart)
+            return (firstMonth...lastMonth).map { month in
+                let key = String(format: "%04d-%02d", year, month)
+                let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? periodStart
+                let rows = records.filter { $0.date.hasPrefix(key) }
+                return DayPoint(
+                    id: key,
+                    date: date,
+                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                )
+            }
         }
-        let bookRecords = store.records.filter { $0.bookUid == store.writeBookID }
-        return (0..<7).map { offset -> DayPoint in
-            let day = calendar.date(byAdding: .day, value: -6 + offset, to: anchor) ?? anchor
+        var points: [DayPoint] = []
+        var day = periodStart
+        while day <= periodEnd {
             let key = dateString(day)
-            let dayRecords = bookRecords.filter { $0.date == key }
-            let expense = dayRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
-            let income = dayRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
-            return DayPoint(id: key, date: day, expense: expense, income: income)
+            let rows = records.filter { $0.date == key }
+            points.append(DayPoint(
+                id: key,
+                date: day,
+                expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+            ))
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
         }
+        return points
     }
 
     private var categoryPoints: [CategoryPoint] {
-        let expenses = monthRecords.filter { $0.direction == .expense }
+        let expenses = periodRecords.filter { $0.direction == .expense }
         let grouped = Dictionary(grouping: expenses, by: { $0.category.isEmpty ? "未分类" : $0.category })
             .mapValues { $0.reduce(0) { $0 + $1.amountCents } }
         let total = max(1, grouped.values.reduce(0, +))
