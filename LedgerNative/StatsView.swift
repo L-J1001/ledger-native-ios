@@ -270,8 +270,8 @@ struct StatsView: View {
             .foregroundStyle(AppTheme.expense)
             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
             .interpolationMethod(points.count > 2 ? .catmullRom : .linear)
-            .symbol(.circle)
-            .symbolSize(points.count > 24 ? 6 : 10)
+            .symbol(Circle())
+            .symbolSize(CGFloat(points.count > 24 ? 6 : 10))
 
             LineMark(
                 x: .value("格", point.index),
@@ -280,8 +280,8 @@ struct StatsView: View {
             .foregroundStyle(AppTheme.income)
             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
             .interpolationMethod(points.count > 2 ? .catmullRom : .linear)
-            .symbol(.circle)
-            .symbolSize(points.count > 24 ? 6 : 10)
+            .symbol(Circle())
+            .symbolSize(CGFloat(points.count > 24 ? 6 : 10))
         }
         .chartXScale(domain: -0.5...(Double(max(1, points.count)) - 0.5))
         .chartXAxis {
@@ -323,8 +323,10 @@ struct StatsView: View {
         }
         if result.last != count - 1 { result.append(count - 1) }
         if result.count > 2 {
-            result.removeAll { idx in
-                idx != 0 && idx != count - 1 && result.contains(idx - 1) && result.contains(idx + 1)
+            let picked = Set(result)
+            result = result.filter { idx in
+                if idx == 0 || idx == count - 1 { return true }
+                return !(picked.contains(idx - 1) && picked.contains(idx + 1))
             }
         }
         return result
