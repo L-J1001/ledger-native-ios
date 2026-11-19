@@ -10,6 +10,33 @@ struct HomeView: View {
     @State private var taxonomyKind: TaxonomyKind?
 
     var body: some View {
+        Group {
+            if horizontalSize == .regular {
+                // iPad：记一笔用全屏呈现，sheet 在平板上只有一个小浮窗，没法用。
+                baseScreen
+                    .fullScreenCover(isPresented: $showEditor) {
+                        RecordEditorView()
+                            .environmentObject(store)
+                    }
+                    .fullScreenCover(item: $editingRecord) { record in
+                        RecordEditorView(record: record)
+                            .environmentObject(store)
+                    }
+            } else {
+                baseScreen
+                    .sheet(isPresented: $showEditor) {
+                        RecordEditorView()
+                            .environmentObject(store)
+                    }
+                    .sheet(item: $editingRecord) { record in
+                        RecordEditorView(record: record)
+                            .environmentObject(store)
+                    }
+            }
+        }
+    }
+
+    private var baseScreen: some View {
         NavigationStack {
             ScrollView {
                 if horizontalSize == .regular {
@@ -45,14 +72,6 @@ struct HomeView: View {
             .scrollIndicators(.hidden)
             .refreshable {
                 await store.syncNow()
-            }
-            .sheet(isPresented: $showEditor) {
-                RecordEditorView()
-                    .environmentObject(store)
-            }
-            .sheet(item: $editingRecord) { record in
-                RecordEditorView(record: record)
-                    .environmentObject(store)
             }
             .sheet(isPresented: $showLogin) {
                 LoginView()

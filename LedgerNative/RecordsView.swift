@@ -28,7 +28,35 @@ struct RecordsView: View {
         var recordCount: Int { entries.reduce(0) { $0 + $1.records.count } }
     }
 
+    @Environment(\.horizontalSizeClass) private var horizontalSize
+
     var body: some View {
+        Group {
+            if horizontalSize == .regular {
+                baseScreen
+                    .fullScreenCover(isPresented: $showEditor) {
+                        RecordEditorView()
+                            .environmentObject(store)
+                    }
+                    .fullScreenCover(item: $editingRecord) { record in
+                        RecordEditorView(record: record)
+                            .environmentObject(store)
+                    }
+            } else {
+                baseScreen
+                    .sheet(isPresented: $showEditor) {
+                        RecordEditorView()
+                            .environmentObject(store)
+                    }
+                    .sheet(item: $editingRecord) { record in
+                        RecordEditorView(record: record)
+                            .environmentObject(store)
+                    }
+            }
+        }
+    }
+
+    private var baseScreen: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 filters
@@ -103,14 +131,6 @@ struct RecordsView: View {
                             .font(.system(size: 15, weight: .bold))
                     }
                 }
-            }
-            .sheet(isPresented: $showEditor) {
-                RecordEditorView()
-                    .environmentObject(store)
-            }
-            .sheet(item: $editingRecord) { record in
-                RecordEditorView(record: record)
-                    .environmentObject(store)
             }
         }
     }

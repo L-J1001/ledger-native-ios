@@ -63,6 +63,8 @@ struct RecordEditorView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 10)
                 .padding(.bottom, 26)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
             }
             .background(AppTheme.grouped.ignoresSafeArea())
             .scrollIndicators(.hidden)
