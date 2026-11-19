@@ -4,6 +4,8 @@ struct SettingsView: View {
     @EnvironmentObject private var store: LedgerStore
     @State private var showLogin = false
     @State private var bookTarget: BookEditorTarget?
+    /// 外观三态，和安卓 / PWA 用同一个键名和同一套口径。
+    @AppStorage("theme_mode") private var themeMode: String = "system"
 
     var body: some View {
         NavigationStack {
@@ -12,6 +14,7 @@ struct SettingsView: View {
                 syncSection
                 booksSection
                 taxonomySection
+                appearanceSection
                 trashSection
                 dataSection
                 supportSection
@@ -225,6 +228,21 @@ struct SettingsView: View {
             Text("当前账本 · 选项")
         } footer: {
             Text("记账时只从这些选项里选，不再手输；桌面端记录里用过的值同步后会自动出现。")
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            Picker("外观", selection: $themeMode) {
+                Text("浅色").tag("light")
+                Text("深色").tag("dark")
+                Text("跟随系统").tag("system")
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("外观")
+        } footer: {
+            Text("深色模式整页生效，图例、卡片、图表都会跟着换色；跟随系统时由 iOS 的深浅设置决定。")
         }
     }
 

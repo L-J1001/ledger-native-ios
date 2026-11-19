@@ -2,9 +2,9 @@ import SwiftUI
 import Charts
 
 /// 统计页：三端口径统一（iPhone / iPad / 安卓 / PWA 完全一致）
-/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝这一天往前推 30 天（含当天）
-/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝这个月往前推 12 个月（含本月）
-/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝今年往前推 5 年（含今年），共 6 根
+/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝含所选那天在内的最近 7 天
+/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝含本月在内的最近 6 个月
+/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝含今年在内的最近 5 年，共 5 根
 /// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时给「回到今天」胶囊，双击日期同效。
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
@@ -449,9 +449,9 @@ struct StatsView: View {
 
     private var windowStart: Date {
         switch range {
-        case .day: return cal.date(byAdding: .day, value: -29, to: clampedAnchor) ?? clampedAnchor
-        case .month: return cal.date(byAdding: .month, value: -11, to: periodStartDate) ?? periodStartDate
-        case .year: return cal.date(byAdding: .year, value: -5, to: periodStartDate) ?? periodStartDate
+        case .day: return cal.date(byAdding: .day, value: -6, to: clampedAnchor) ?? clampedAnchor
+        case .month: return cal.date(byAdding: .month, value: -5, to: periodStartDate) ?? periodStartDate
+        case .year: return cal.date(byAdding: .year, value: -4, to: periodStartDate) ?? periodStartDate
         }
     }
 
@@ -459,11 +459,11 @@ struct StatsView: View {
 
     private var windowNote: String {
         switch range {
-        case .day: return "近 30 天"
+        case .day: return "近 7 天"
         case .month:
-            let months = (cal.dateComponents([.month], from: windowStart, to: windowEnd).month ?? 11) + 1
-            return "近 \(min(12, max(1, months))) 个月"
-        case .year: return "近 6 年"
+            let months = (cal.dateComponents([.month], from: windowStart, to: windowEnd).month ?? 5) + 1
+            return "近 \(min(6, max(1, months))) 个月"
+        case .year: return "近 5 年"
         }
     }
 
