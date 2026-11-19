@@ -273,12 +273,20 @@ struct SettingsView: View {
         }
     }
 
+    /// 版本号必须直接读包信息：写死过一次 1.2.6，结果装到 1.4.1 还显示旧号。
+    private var appVersionText: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String ?? ""
+        return build.isEmpty ? "\(short) · 原生 SwiftUI" : "\(short) (\(build)) · 原生 SwiftUI"
+    }
+
     private var aboutSection: some View {
         Section("关于") {
             HStack {
                 Text("版本")
                 Spacer()
-                Text("1.2.6 · 原生 SwiftUI")
+                Text(appVersionText)
                     .foregroundStyle(AppTheme.textSecondary)
             }
             HStack {
