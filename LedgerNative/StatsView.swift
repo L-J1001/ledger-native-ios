@@ -10,19 +10,18 @@ struct StatsView: View {
         case year = "按年"
         var id: String { rawValue }
 
-        /// 图表每一段代表的时间粒度，与区间本身区分开。
+        /// 趋势图窗口与柱/点粒度。
         var precision: String {
             switch self {
-            case .day: return "每天一格"
-            case .month: return "每月一格"
-            case .year: return "每年一格"
+            case .day: return "近 30 天 · 每天一格"
+            case .month: return "近 12 个月 · 每月一格"
+            case .year: return "近 6 年 · 每年一格"
             }
         }
     }
 
     @State private var range: StatsRange = .day
     @State private var offset = 0
-    @State private var dragX: CGFloat = 0
 
     private struct DayPoint: Identifiable {
         let id: String
@@ -48,6 +47,7 @@ struct StatsView: View {
                     factsCard
                     trendCard
                     categoryCard
+                    insightCard
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 4)
@@ -69,7 +69,6 @@ struct StatsView: View {
         .pickerStyle(.segmented)
         .onChange(of: range) { _, _ in
             offset = 0
-            dragX = 0
         }
     }
 
@@ -90,12 +89,11 @@ struct StatsView: View {
             VStack(spacing: 3) {
                 Text(periodTitle)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                if offset != 0 {
-                    Button("回到当前") { offset = 0 }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .buttonStyle(.plain)
-                }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(offset == 0 ? "当前区间" : "点箭头回到当前")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.textSecondary)
             }
             Spacer()
 
@@ -141,9 +139,11 @@ struct StatsView: View {
     }
 
     private var factsCard: some View {
+        let expenseTitle = range == .day ? "当日支出" : "日均支出"
+        let expenseHint = range == .day ? periodTitle : "按 \(periodDays) 天计"
         let facts: [(String, String, String)] = [
             ("记账笔数", "\(periodRecords.count) 笔", "含拆分后的明细"),
-            ("日均支出", money(dailyExpenseCents), "按 \(periodDays) 天计"),
+            (expenseTitle, money(dailyExpenseCents), expenseHint),
             ("最大单笔", money(maxSingleExpenseCents), maxSingleExpenseCategory),
             ("最常记", topMemberName, topMemberDetail)
         ]
@@ -178,13 +178,14 @@ struct StatsView: View {
         }
     }
 
+    /// 固定窗口趋势：不跟手、不滑动，只随上方区间箭头整体换一段。
     private var trendCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("收支趋势")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text("\(periodTitle) · \(range.precision)")
+                    Text("\(windowNote) · \(range.precision)")
                         .font(.system(size: 10))
                         .foregroundStyle(AppTheme.textSecondary)
                 }
@@ -195,98 +196,52 @@ struct StatsView: View {
                 }
             }
 
-            GeometryReader { geo in
-                let width = max(1, geo.size.width)
-                ZStack {
-                    if trendTotal == 0 {
-                        Text("这个区间还没有记录")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        trendChart(points: trendPoints)
-                            .frame(width: width)
-                            .offset(x: dragX)
-                        if dragX != 0 {
-                            trendChart(points: trendPoints(at: offset + (dragX < 0 ? 1 : -1)))
-                                .frame(width: width)
-                                .offset(x: dragX + (dragX < 0 ? width : -width))
-                        }
-                    }
-                }
-                .frame(width: width, height: 190)
-                .clipped()
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            var dx = value.translation.width
-                            // 已在本期时往“更新”方向轻拉只给一点点位移，松手回弹。
-                            if dx > 0 && offset == 0 { dx *= 0.32 }
-                            dragX = dx
-                        }
-                        .onEnded { value in
-                            guard dragX != 0 else { return }
-                            let forward = value.translation.width < 0
-                            guard abs(value.predictedEndTranslation.width) > width * 0.28,
-                                  abs(value.translation.width) > abs(value.translation.height) else {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragX = 0 }
-                                return
-                            }
-                            if !forward && offset == 0 {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragX = 0 }
-                                return
-                            }
-                            // 先把相邻那一页整体推到屏幕中间，落定后同一帧换成新的一期，视觉上完全连续。
-                            withAnimation(.easeOut(duration: 0.16)) { dragX = forward ? -width : width }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                                dragX = 0
-                                offset += forward ? 1 : -1
-                            }
-                        }
-                )
+            if trendTotal == 0 {
+                Text("这一段窗口里还没有记录")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 190)
+            } else {
+                trendChart(points: trendPoints)
             }
-            .frame(height: 190)
         }
         .cardStyle(padding: 16)
     }
 
-    /// 单页趋势图：收支双折线 + 日期轴。抽成函数是为了能同时画出相邻页。
-    @ViewBuilder
     private func trendChart(points: [DayPoint]) -> some View {
         Chart {
             ForEach(points) { point in
                 LineMark(
-                    x: .value("日期", point.date),
+                    x: .value("时间", point.date),
                     y: .value("金额", Double(point.expense) / 100.0)
                 )
                 .foregroundStyle(AppTheme.expense)
                 .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 .interpolationMethod(.catmullRom)
                 .symbol(.circle)
-                .symbolSize(12)
+                .symbolSize(10)
 
                 LineMark(
-                    x: .value("日期", point.date),
+                    x: .value("时间", point.date),
                     y: .value("金额", Double(point.income) / 100.0)
                 )
                 .foregroundStyle(AppTheme.income)
                 .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
                 .interpolationMethod(.catmullRom)
                 .symbol(.circle)
-                .symbolSize(12)
+                .symbolSize(10)
             }
         }
+        .chartXScale(range: .plotDimension(startPadding: 8, endPadding: 8))
         .chartXAxis {
-            AxisMarks { value in
+            AxisMarks { _ in
                 AxisGridLine().foregroundStyle(AppTheme.hairline)
                 switch range {
                 case .day:
                     AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
                         .foregroundStyle(AppTheme.textSecondary)
                 case .month:
-                    AxisValueLabel(format: .dateTime.month(.defaultDigits))
+                    AxisValueLabel(format: .dateTime.year(.twoDigits).month(.defaultDigits))
                         .foregroundStyle(AppTheme.textSecondary)
                 case .year:
                     AxisValueLabel(format: .dateTime.year())
@@ -295,13 +250,14 @@ struct StatsView: View {
             }
         }
         .chartYAxis {
-            AxisMarks { value in
+            AxisMarks { _ in
                 AxisGridLine().foregroundStyle(AppTheme.hairline)
                 AxisValueLabel()
                     .foregroundStyle(AppTheme.textSecondary)
             }
         }
         .frame(height: 190)
+        .transition(.opacity)
     }
 
     private func legend(color: Color, text: String) -> some View {
@@ -358,45 +314,60 @@ struct StatsView: View {
         .cardStyle(padding: 16)
     }
 
+    private var insightCard: some View {
+        let top = categoryPoints.first
+        let text: String = {
+            guard let top else {
+                return "这个区间还没有支出。记几笔之后，这里会显示消费结构、日均和最大单笔。"
+            }
+            let base = "支出最多的是\(top.name)，共 \(money(top.cents))。"
+            if range == .day {
+                return base + " 当天共记 \(periodRecords.count) 笔。"
+            }
+            return base + " 日均支出 \(money(dailyExpenseCents))，已记 \(periodRecords.count) 笔；共 \(periodDays) 天。"
+        }()
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("区间小结")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle(padding: 16)
+    }
+
     /* ---------------- 区间与数据 ---------------- */
 
     private var calendar: Calendar { Calendar.current }
     private var today: Date { calendar.startOfDay(for: Date()) }
 
-    private var periodStart: Date { periodStart(at: offset) }
-
-    /// 取任意偏移的区间起点：趋势图要同时画出前后两页，才能跟手滑，而不是滑完再刷新。
-    private func periodStart(at delta: Int) -> Date {
+    /// 按天=某一天、按月=某个月、按年=某一年；offset 决定前翻几格。
+    private var periodStart: Date {
         switch range {
         case .day:
-            let monthStart = startOfMonth(today)
-            return calendar.date(byAdding: .month, value: delta, to: monthStart) ?? monthStart
+            return calendar.date(byAdding: .day, value: offset, to: today) ?? today
         case .month:
-            let yearStart = startOfYear(today)
-            return calendar.date(byAdding: .year, value: delta, to: yearStart) ?? yearStart
+            let anchor = calendar.date(byAdding: .month, value: offset, to: startOfMonth(today)) ?? today
+            return startOfMonth(anchor)
         case .year:
-            // 一次看连续 5 年：offset=0 是「今年往前数 5 年」，每往前一段再退 5 年。
-            let endYear = calendar.component(.year, from: today) + delta * 5
-            let endYearStart = calendar.date(from: DateComponents(year: endYear, month: 1, day: 1)) ?? today
-            return calendar.date(byAdding: .year, value: -4, to: endYearStart) ?? endYearStart
+            let anchor = calendar.date(byAdding: .year, value: offset, to: startOfYear(today)) ?? today
+            return startOfYear(anchor)
         }
     }
 
-    private var periodEnd: Date { periodEnd(at: offset) }
-
-    private func periodEnd(at delta: Int) -> Date {
+    private var periodEnd: Date {
+        let end: Date
         switch range {
         case .day:
-            if delta == 0 { return today }
-            return endOfMonth(startOfMonth(periodStart(at: delta)))
+            end = periodStart
         case .month:
-            if delta == 0 { return today }
-            return endOfYear(startOfYear(periodStart(at: delta)))
+            end = endOfMonth(periodStart)
         case .year:
-            let lastYearStart = startOfYear(calendar.date(byAdding: .year, value: 4, to: periodStart(at: delta)) ?? periodStart(at: delta))
-            if delta == 0 { return today }
-            return endOfYear(lastYearStart)
+            end = endOfYear(periodStart)
         }
+        return min(end, today)
     }
 
     private var periodDays: Int {
@@ -408,14 +379,41 @@ struct StatsView: View {
         f.locale = Locale(identifier: "zh_CN")
         switch range {
         case .day:
-            f.dateFormat = "yyyy年M月"
-            return f.string(from: periodStart)
+            f.dateFormat = "yyyy年M月d日"
         case .month:
-            return "\(calendar.component(.year, from: periodStart))年"
+            f.dateFormat = "yyyy年M月"
         case .year:
-            let startYear = calendar.component(.year, from: periodStart)
-            let endYear = calendar.component(.year, from: periodEnd)
-            return startYear == endYear ? "\(startYear)年" : "\(startYear) – \(endYear)年"
+            f.dateFormat = "yyyy年"
+        }
+        return f.string(from: periodStart)
+    }
+
+    private var windowEnd: Date { periodEnd }
+
+    /// 趋势窗口：按天近 30 天、按月近 12 个月、按年近 6 年，都以当前区间为最后一段。
+    private var windowStart: Date {
+        switch range {
+        case .day:
+            return calendar.date(byAdding: .day, value: -29, to: windowEnd) ?? windowEnd
+        case .month:
+            return calendar.date(byAdding: .month, value: -11, to: startOfMonth(periodStart)) ?? periodStart
+        case .year:
+            return calendar.date(byAdding: .year, value: -5, to: startOfYear(periodStart)) ?? periodStart
+        }
+    }
+
+    private var windowNote: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        switch range {
+        case .day:
+            f.dateFormat = "M/d"
+            return "\(f.string(from: windowStart))–\(f.string(from: windowEnd))"
+        case .month:
+            f.dateFormat = "yyyy年M月"
+            return "\(f.string(from: windowStart))–\(f.string(from: windowEnd))"
+        case .year:
+            return "\(calendar.component(.year, from: windowStart))–\(calendar.component(.year, from: windowEnd))年"
         }
     }
 
@@ -439,15 +437,15 @@ struct StatsView: View {
         calendar.date(byAdding: DateComponents(year: 1, day: -1), to: startOfYear(date)) ?? date
     }
 
-    private var periodRecords: [LedgerRecord] { periodRecords(at: offset) }
-
-    private func periodRecords(at delta: Int) -> [LedgerRecord] {
-        let start = dateString(periodStart(at: delta))
-        let end = dateString(periodEnd(at: delta))
+    private func records(from start: Date, to end: Date) -> [LedgerRecord] {
+        let s = dateString(start)
+        let e = dateString(end)
         return store.records.filter {
-            $0.bookUid == store.writeBookID && !$0.excludeTotal && $0.date >= start && $0.date <= end
+            $0.bookUid == store.writeBookID && !$0.excludeTotal && $0.date >= s && $0.date <= e
         }
     }
+
+    private var periodRecords: [LedgerRecord] { records(from: periodStart, to: periodEnd) }
 
     private var incomeCents: Int {
         periodRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
@@ -489,55 +487,54 @@ struct StatsView: View {
         return "\(top.value.count) 笔 · \(money(amount))"
     }
 
-    private var trendTotal: Int { trendPoints(at: offset).reduce(0) { $0 + $1.expense + $1.income } }
+    private var trendTotal: Int { trendPoints.reduce(0) { $0 + $1.expense + $1.income } }
 
-    private var trendPoints: [DayPoint] { trendPoints(at: offset) }
-
-    private func trendPoints(at delta: Int) -> [DayPoint] {
-        let records = periodRecords(at: delta)
-        let start = periodStart(at: delta)
-        let end = periodEnd(at: delta)
+    private var trendPoints: [DayPoint] {
+        let rows = records(from: windowStart, to: windowEnd)
         switch range {
         case .year:
-            let firstYear = calendar.component(.year, from: start)
-            let lastYear = calendar.component(.year, from: end)
+            let firstYear = calendar.component(.year, from: windowStart)
+            let lastYear = calendar.component(.year, from: windowEnd)
             return (firstYear...max(firstYear, lastYear)).map { year in
                 let key = String(format: "%04d", year)
-                let date = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) ?? start
-                let rows = records.filter { $0.date.hasPrefix(key) }
+                let date = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) ?? windowStart
+                let items = rows.filter { $0.date.hasPrefix(key) }
                 return DayPoint(
                     id: key,
                     date: date,
-                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
-                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                    expense: items.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: items.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
                 )
             }
         case .month:
-            let year = calendar.component(.year, from: start)
-            let lastMonth = (delta == 0 && calendar.component(.year, from: end) == year)
-                ? calendar.component(.month, from: end) : 12
-            return (1...max(1, lastMonth)).map { month in
-                let key = String(format: "%04d-%02d", year, month)
-                let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? start
-                let rows = records.filter { $0.date.hasPrefix(key) }
+            let first = calendar.component(.year, from: windowStart) * 12 + calendar.component(.month, from: windowStart)
+            let last = calendar.component(.year, from: windowEnd) * 12 + calendar.component(.month, from: windowEnd)
+            return (first...max(first, last)).map { index in
+                let year = index / 12
+                let month = index % 12
+                let realMonth = month == 0 ? 12 : month
+                let realYear = month == 0 ? year - 1 : year
+                let key = String(format: "%04d-%02d", realYear, realMonth)
+                let date = calendar.date(from: DateComponents(year: realYear, month: realMonth, day: 1)) ?? windowStart
+                let items = rows.filter { $0.date.hasPrefix(key) }
                 return DayPoint(
                     id: key,
                     date: date,
-                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
-                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                    expense: items.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: items.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
                 )
             }
         case .day:
             var points: [DayPoint] = []
-            var day = start
-            while day <= end {
+            var day = windowStart
+            while day <= windowEnd {
                 let key = dateString(day)
-                let rows = records.filter { $0.date == key }
+                let items = rows.filter { $0.date == key }
                 points.append(DayPoint(
                     id: key,
                     date: day,
-                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
-                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                    expense: items.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: items.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
                 ))
                 day = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
             }
