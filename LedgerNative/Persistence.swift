@@ -13,6 +13,9 @@ struct PersistedState: Codable {
     var taxonomies: [String: BookTaxonomy]?
     var budgets: [String: Int]?
     var trash: [LedgerRecord]?
+    /// 自签名 IPA 覆盖安装后 Keychain 可能暂时读不到，状态文件里的 token 作为兜底，
+    /// 避免每次续签都要重新输账号密码。
+    var token: String?
 }
 
 final class Persistence {

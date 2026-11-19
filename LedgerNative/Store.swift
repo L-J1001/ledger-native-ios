@@ -26,6 +26,7 @@ final class LedgerStore: ObservableObject {
     private var token: String?
 
     init() {
+        var savedToken: String?
         if let saved = persistence.load() {
             books = saved.books
             records = saved.records
@@ -38,6 +39,7 @@ final class LedgerStore: ObservableObject {
             taxonomies = saved.taxonomies ?? [:]
             budgets = saved.budgets ?? [:]
             trash = saved.trash ?? []
+            savedToken = saved.token
         }
 
         if books.isEmpty {
@@ -48,7 +50,11 @@ final class LedgerStore: ObservableObject {
         if deviceID.isEmpty {
             deviceID = "ios-" + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16))
         }
-        token = Keychain.readToken()
+        let keychainToken = Keychain.readToken()
+        token = keychainToken ?? savedToken
+        if keychainToken == nil, let token {
+            Keychain.saveToken(token)
+        }
         if auth != nil && token == nil {
             auth = nil
         }
@@ -714,7 +720,8 @@ final class LedgerStore: ObservableObject {
             lastSyncAt: lastSyncAt,
             taxonomies: taxonomies,
             budgets: budgets,
-            trash: trash
+            trash: trash,
+            token: token
         )
         persistence.save(state)
     }
