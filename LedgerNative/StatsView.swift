@@ -231,6 +231,18 @@ struct StatsView: View {
                     }
                 }
                 .frame(height: 190)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 36)
+                        .onEnded { value in
+                            guard abs(value.translation.width) > abs(value.translation.height),
+                                  abs(value.translation.width) > 36 else { return }
+                            if value.translation.width < 0 {
+                                if offset < 0 { offset += 1 }
+                            } else {
+                                offset -= 1
+                            }
+                        }
+                )
             }
         }
         .cardStyle(padding: 16)
