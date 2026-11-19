@@ -13,8 +13,6 @@ final class LedgerStore: ObservableObject {
     @Published private(set) var lastSyncAt: Date?
     /// 每本账本自己的成员 / 分类 / 账户；不会跨账本串。
     @Published private(set) var taxonomies: [String: BookTaxonomy] = [:]
-    /// 每本账本的月预算（分）；0 表示未设置。
-    @Published private(set) var budgets: [String: Int] = [:]
     /// 本机回收站；删除先进这里，可还原，彻底删除才移除。
     @Published private(set) var trash: [LedgerRecord] = []
 
@@ -37,7 +35,6 @@ final class LedgerStore: ObservableObject {
             deviceID = saved.deviceID
             lastSyncAt = saved.lastSyncAt
             taxonomies = saved.taxonomies ?? [:]
-            budgets = saved.budgets ?? [:]
             trash = saved.trash ?? []
             savedToken = saved.token
         }
@@ -101,14 +98,6 @@ final class LedgerStore: ObservableObject {
             .reduce(0) { $0 + $1.amountCents }
     }
 
-    var budgetCents: Int { budgets[writeBookID] ?? 0 }
-    var monthBudgetRemaining: Int { max(0, budgetCents - monthExpenseCents) }
-
-    func setBudget(_ cents: Int) {
-        budgets[writeBookID] = max(0, cents)
-        save()
-    }
-
     var trashRecords: [LedgerRecord] {
         trash.filter { $0.bookUid == writeBookID }
             .sorted { $0.date > $1.date }
@@ -161,32 +150,21 @@ final class LedgerStore: ObservableObject {
         let bookID = writeBookID
         let custom = taxonomy(for: bookID)
         let synced = direction == .income ? custom.incomeCategories : custom.expenseCategories
-        let used = records
-            .filter { $0.bookUid == bookID && $0.direction == direction }
-            .map(\.category)
-            .filter { !$0.isEmpty && $0 != "未分类" }
-        // 只要当前账本已经有真实成员/分类（桌面同步或本机新增），就不再硬塞
-        // 「我 / 家人 / 共同」这类占位值。首次安装、空账本才用默认项兜底。
         let base: [String]
-        if synced.isEmpty && used.isEmpty {
+        if synced.isEmpty {
             base = direction == .income ? Self.defaultIncomeCategories : Self.defaultExpenseCategories
         } else {
             base = synced
         }
         var seen = Set<String>()
-        return (base + used).filter { seen.insert($0).inserted }
+        return base.filter { seen.insert($0).inserted }
     }
 
     var memberOptions: [String] {
         let bookID = writeBookID
         let custom = taxonomy(for: bookID).members
-        let used = records
-            .filter { $0.bookUid == bookID }
-            .map(\.member)
-            .filter { !$0.isEmpty && $0 != "我" }
-        // 成员只认云端同步下发和用户自己新增的，不再生成任何占位成员。
         var seen = Set<String>()
-        return (custom + used)
+        return custom
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0 != "我" }
             .filter { seen.insert($0).inserted }
     }
@@ -194,10 +172,9 @@ final class LedgerStore: ObservableObject {
     var accountOptions: [String] {
         let bookID = writeBookID
         let custom = taxonomy(for: bookID).accounts
-        let used = records.filter { $0.bookUid == bookID }.map(\.account).filter { !$0.isEmpty }
-        let base = (custom.isEmpty && used.isEmpty) ? Self.defaultAccounts : custom
+        let base = custom.isEmpty ? Self.defaultAccounts : custom
         var seen = Set<String>()
-        return (base + used).filter { seen.insert($0).inserted }
+        return base.filter { seen.insert($0).inserted }
     }
 
     /// 设置页/编辑器使用的统一入口；分类按收支方向区分。
@@ -501,7 +478,6 @@ final class LedgerStore: ObservableObject {
                 books = []
                 taxonomies = [:]
                 trash = []
-                budgets = [:]
                 cursor = 0
                 selectedBookID = nil
             }
@@ -514,13 +490,13 @@ final class LedgerStore: ObservableObject {
                 selectedBookID = book.id
             }
 
-            // 登录前在本地记的账，迁移到账号的真实 book_uid，避免推到一个云端不存在的账本。
+            // 登录前的本地账目保留在独立账本，不自动迁入账号默认账本，避免串账。
             let localID = "book-local"
-            for i in records.indices where records[i].bookUid == localID {
-                records[i].bookUid = response.bookUid
-            }
-            for i in outbox.indices where outbox[i].bookUid == localID {
-                outbox[i].bookUid = response.bookUid
+            if records.contains(where: { $0.bookUid == localID }) {
+                if !books.contains(where: { $0.id == localID }) {
+                    books.insert(LedgerBook(id: localID, name: "本地账本"), at: 0)
+                }
+                selectedBookID = localID
             }
             save()
             await syncNow()
@@ -589,90 +565,28 @@ final class LedgerStore: ObservableObject {
         }
     }
 
-    /// 用云端账本列表校准本机列表。
-    /// 1) 云端同名账本只保留一条（优先登录 book_uid，其次最新更新时间），
-    ///    旧 book_uid 里的记录迁到保留项，避免切换器里出现两个「宣化」。
-    /// 2) 本机有记录 / 待推送的账本保留；空壳账本直接丢掉。
-    /// 3) 本机账本名称与云端同名时合并，不再并排显示两条。
+    /// 安全账本对账：按云端 book_uid 合并元数据，不自动迁移本地记录。
     private func reconcileBooks(_ remote: [LedgerBook]) {
-        var byName: [String: LedgerBook] = [:]
+        let remoteIDs = Set(remote.map(\.id))
         for book in remote {
-            let key = normalizedBookName(book.name)
-            guard !key.isEmpty else { continue }
-            if let existing = byName[key] {
-                let candidate: LedgerBook
-                if book.id == auth?.bookUid { candidate = book }
-                else if existing.id == auth?.bookUid { candidate = existing }
-                else { candidate = book.updatedAt >= existing.updatedAt ? book : existing }
-                let loser = candidate.id == book.id ? existing : book
-                if loser.id != candidate.id {
-                    migrateLocalBook(from: loser.id, to: candidate.id)
-                }
-                byName[key] = candidate
-            } else {
-                byName[key] = book
-            }
-        }
-        let deduped = byName.values.sorted {
-            if $0.updatedAt == $1.updatedAt { return $0.name < $1.name }
-            return $0.updatedAt > $1.updatedAt
-        }
-        let remoteIDs = Set(deduped.map(\.id))
-
-        for book in deduped {
-            // 本机还有未推的 taxonomy 时先不覆盖，等 outbox 推完再以云端为准。
-            let hasPendingMeta = outbox.contains {
-                $0.entity == "book" && $0.bookUid == book.id
-            }
-            if !hasPendingMeta, let taxonomy = book.taxonomy {
+            if let taxonomy = book.taxonomy,
+               !outbox.contains(where: { $0.entity == "book" && $0.bookUid == book.id }) {
                 taxonomies[book.id] = taxonomy
             }
         }
 
-        var survivors: [LedgerBook] = []
+        var localSurvivors: [LedgerBook] = []
         for local in books where !remoteIDs.contains(local.id) {
-            let hasRecords = records.contains { $0.bookUid == local.id }
-            let hasPending = outbox.contains { $0.bookUid == local.id }
-            guard hasRecords || hasPending else { continue } // 空壳 / 旧 bookmeta 幽灵账本
-            if let match = deduped.first(where: {
-                normalizedBookName($0.name) == normalizedBookName(local.name)
-            }) {
-                migrateLocalBook(from: local.id, to: match.id)
-            } else {
-                survivors.append(local)
-                if !outbox.contains(where: { $0.entity == "book" && $0.bookUid == local.id }) {
-                    queueBookMeta(for: local.id, taxonomy: taxonomies[local.id])
-                }
-            }
+            let empty = !records.contains { $0.bookUid == local.id }
+                && !outbox.contains { $0.bookUid == local.id }
+            if empty && local.id.hasPrefix("bookmeta-") { continue }
+            localSurvivors.append(local)
         }
-        books = deduped + survivors
-        if selectedBookID == nil || !books.contains(where: { $0.id == selectedBookID }) {
+        books = remote + localSurvivors
+        if let selectedBookID, books.contains(where: { $0.id == selectedBookID }) {
+            self.selectedBookID = selectedBookID
+        } else {
             selectedBookID = books.first?.id
-        }
-    }
-
-    private func normalizedBookName(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: " ", with: "")
-            .lowercased()
-    }
-
-    private func migrateLocalBook(from old: String, to new: String) {
-        guard old != new else { return }
-        for i in records.indices where records[i].bookUid == old {
-            records[i].bookUid = new
-        }
-        for i in outbox.indices where outbox[i].bookUid == old {
-            outbox[i].bookUid = new
-        }
-        for i in trash.indices where trash[i].bookUid == old {
-            trash[i].bookUid = new
-        }
-        if let value = budgets.removeValue(forKey: old), budgets[new] == nil {
-            budgets[new] = value
-        }
-        if let value = taxonomies.removeValue(forKey: old), taxonomies[new] == nil {
-            taxonomies[new] = value
         }
     }
 
@@ -734,7 +648,6 @@ final class LedgerStore: ObservableObject {
             deviceID: deviceID,
             lastSyncAt: lastSyncAt,
             taxonomies: taxonomies,
-            budgets: budgets,
             trash: trash,
             token: token
         )

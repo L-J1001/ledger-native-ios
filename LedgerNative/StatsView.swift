@@ -13,6 +13,7 @@ struct StatsView: View {
 
     @State private var range: StatsRange = .week
     @State private var offset = 0
+    @State private var dragX: CGFloat = 0
 
     private struct DayPoint: Identifiable {
         let id: String
@@ -57,7 +58,10 @@ struct StatsView: View {
             }
         }
         .pickerStyle(.segmented)
-        .onChange(of: range) { _, _ in offset = 0 }
+        .onChange(of: range) { _, _ in
+            offset = 0
+            dragX = 0
+        }
     }
 
     private var periodHeader: some View {
@@ -231,15 +235,31 @@ struct StatsView: View {
                     }
                 }
                 .frame(height: 190)
+                .offset(x: dragX)
+                .opacity(1 - min(0.32, abs(dragX) / 320 * 0.5))
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 36)
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            dragX = value.translation.width
+                        }
                         .onEnded { value in
-                            guard abs(value.translation.width) > abs(value.translation.height),
-                                  abs(value.translation.width) > 36 else { return }
-                            if value.translation.width < 0 {
-                                if offset < 0 { offset += 1 }
-                            } else {
-                                offset -= 1
+                            guard abs(value.translation.width) > 36,
+                                  abs(value.translation.width) > abs(value.translation.height) else {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) { dragX = 0 }
+                                return
+                            }
+                            let movingForward = value.translation.width < 0
+                            if movingForward && offset >= 0 {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) { dragX = 0 }
+                                return
+                            }
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                dragX = movingForward ? 180 : -180
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                                offset += movingForward ? 1 : -1
+                                dragX = 0
                             }
                         }
                 )
@@ -374,7 +394,7 @@ struct StatsView: View {
         let start = dateString(periodStart)
         let end = dateString(periodEnd)
         return store.records.filter {
-            $0.bookUid == store.writeBookID && $0.date >= start && $0.date <= end
+            $0.bookUid == store.writeBookID && !$0.excludeTotal && $0.date >= start && $0.date <= end
         }
     }
 

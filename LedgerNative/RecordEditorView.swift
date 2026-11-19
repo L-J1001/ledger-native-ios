@@ -119,6 +119,7 @@ struct RecordEditorView: View {
             let list = siblings.isEmpty ? [editing] : siblings
             splitLines = list.map {
                 SplitLine(category: $0.category,
+                          member: $0.member,
                           amountText: String(format: "%.2f", $0.amountYuan),
                           note: $0.note)
             }
@@ -133,7 +134,7 @@ struct RecordEditorView: View {
             account = editing.account
             excludeTotal = editing.excludeTotal
         } else if editing == nil {
-            splitLines = [SplitLine(category: category, amountText: "", note: "")]
+            splitLines = [SplitLine(category: category, member: member, amountText: "", note: "")]
             amountFocused = true
         }
         if member.isEmpty || member == "我",
@@ -233,6 +234,7 @@ struct RecordEditorView: View {
         .onChange(of: splitEnabled) { _, enabled in
             if enabled && splitLines.isEmpty {
                 splitLines = [SplitLine(category: category,
+                                        member: member,
                                         amountText: amountText,
                                         note: note)]
             } else if !enabled {
@@ -357,6 +359,21 @@ struct RecordEditorView: View {
             ForEach($splitLines) { $line in
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
+                        Text("成员")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AppTheme.textSecondary)
+                        Picker("成员", selection: $line.member) {
+                            ForEach(splitMembers(line.member), id: \.self) { item in
+                                Text(item).tag(item)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .tint(.primary)
+                        Spacer()
+                    }
+
+                    HStack(spacing: 8) {
                         Picker("分类", selection: $line.category) {
                             ForEach(splitCategories(line.category), id: \.self) { item in
                                 Text(item).tag(item)
@@ -411,7 +428,7 @@ struct RecordEditorView: View {
 
             Button {
                 let next = store.categories(for: direction)
-                splitLines.append(SplitLine(category: next.first ?? category, amountText: "", note: ""))
+                splitLines.append(SplitLine(category: next.first ?? category, member: member, amountText: "", note: ""))
             } label: {
                 Label("添加一行", systemImage: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -489,6 +506,12 @@ struct RecordEditorView: View {
     private func splitCategories(_ current: String) -> [String] {
         var base = store.categories(for: direction)
         if !current.isEmpty, !base.contains(current) { base.insert(current, at: 0) }
+        return base
+    }
+
+    private func splitMembers(_ current: String) -> [String] {
+        var base = store.memberOptions.filter { $0 != "我" }
+        if !current.isEmpty, current != "我", !base.contains(current) { base.insert(current, at: 0) }
         return base
     }
 
@@ -585,19 +608,17 @@ struct RecordEditorView: View {
                 showError = true
                 return
             }
+            guard !line.member.isEmpty, line.member != "我" else {
+                errorMessage = "第 \(index + 1) 行请选择成员"
+                showError = true
+                return
+            }
         }
         guard splitTotalCents > 0 else {
             errorMessage = "明细合计必须大于 0"
             showError = true
             return
         }
-        let who = member.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !who.isEmpty, who != "我" else {
-            errorMessage = "请先选择成员；如果列表为空，请到设置 → 成员管理里添加或同步成员"
-            showError = true
-            return
-        }
-
         let group = editing?.splitGroup?.isEmpty == false
             ? editing!.splitGroup!
             : "sg-" + ULID.generate()
@@ -619,7 +640,7 @@ struct RecordEditorView: View {
                 amountCents: cents(from: line.amountText) ?? 0,
                 category: line.category,
                 note: line.note.trimmingCharacters(in: .whitespacesAndNewlines),
-                member: member.trimmingCharacters(in: .whitespacesAndNewlines),
+                member: line.member.trimmingCharacters(in: .whitespacesAndNewlines),
                 account: account.trimmingCharacters(in: .whitespacesAndNewlines),
                 groupNote: groupNote.trimmingCharacters(in: .whitespacesAndNewlines),
                 splitGroup: group,
@@ -641,7 +662,7 @@ struct RecordEditorView: View {
             note = ""
             groupNote = ""
             category = store.categories(for: direction).first ?? "其他"
-            splitLines = [SplitLine(category: category, amountText: "", note: "")]
+            splitLines = [SplitLine(category: category, member: member, amountText: "", note: "")]
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                 savedHint = true
             }
@@ -660,6 +681,7 @@ struct RecordEditorView: View {
 private struct SplitLine: Identifiable, Equatable {
     let id = UUID()
     var category: String
+    var member: String
     var amountText: String
     var note: String
 }

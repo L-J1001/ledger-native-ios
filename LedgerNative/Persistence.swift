@@ -11,7 +11,6 @@ struct PersistedState: Codable {
     var lastSyncAt: Date?
     /// 旧版本状态文件没有这个字段；用可选值保证升级后仍能读。
     var taxonomies: [String: BookTaxonomy]?
-    var budgets: [String: Int]?
     var trash: [LedgerRecord]?
     /// 自签名 IPA 覆盖安装后 Keychain 可能暂时读不到，状态文件里的 token 作为兜底，
     /// 避免每次续签都要重新输账号密码。

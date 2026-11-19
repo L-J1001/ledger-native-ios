@@ -12,7 +12,7 @@ struct SettingsView: View {
                 syncSection
                 booksSection
                 taxonomySection
-                budgetSection
+                trashSection
                 dataSection
                 supportSection
                 aboutSection
@@ -228,19 +228,8 @@ struct SettingsView: View {
         }
     }
 
-    private var budgetSection: some View {
-        Section("预算与回收站") {
-            NavigationLink {
-                BudgetView()
-                    .environmentObject(store)
-            } label: {
-                HStack {
-                    Label("本月预算", systemImage: "gauge.with.dots.needle.67percent")
-                    Spacer()
-                    Text(store.budgetCents > 0 ? money(store.budgetCents) : "未设置")
-                        .foregroundStyle(AppTheme.textSecondary)
-                }
-            }
+    private var trashSection: some View {
+        Section("回收站") {
             NavigationLink {
                 TrashView()
                     .environmentObject(store)

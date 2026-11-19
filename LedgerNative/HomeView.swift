@@ -33,7 +33,6 @@ struct HomeView: View {
                             monthTitle: store.monthLabel()
                         )
                         quickActions
-                        if store.budgetCents > 0 { budgetCard }
                         recentSection
                         categorySection
                     }
@@ -94,37 +93,6 @@ struct HomeView: View {
             quickActions
             categorySection
         }
-    }
-
-    private var budgetCard: some View {
-        let spent = store.monthExpenseCents
-        let budget = max(1, store.budgetCents)
-        let ratio = min(1.0, Double(spent) / Double(budget))
-        let over = spent > store.budgetCents
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("本月预算")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text(over ? "超支 \(money(spent - store.budgetCents))" : "剩余 \(money(store.budgetCents - spent))")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(over ? AppTheme.expense : AppTheme.income)
-                    .monospacedDigit()
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(AppTheme.hairline)
-                    Capsule()
-                        .fill(over ? AppTheme.expense : AppTheme.accent)
-                        .frame(width: max(4, proxy.size.width * ratio))
-                }
-            }
-            .frame(height: 7)
-            Text("已用 \(money(spent)) / \(money(store.budgetCents))")
-                .font(.system(size: 11))
-                .foregroundStyle(AppTheme.textSecondary)
-        }
-        .cardStyle(padding: 14)
     }
 
     private var header: some View {
