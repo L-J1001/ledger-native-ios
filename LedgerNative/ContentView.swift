@@ -79,6 +79,7 @@ struct ContentView: View {
                 .frame(width: 0.6)
                 .ignoresSafeArea()
             padContent
+                .frame(maxWidth: 1040)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(AppTheme.grouped.ignoresSafeArea())
