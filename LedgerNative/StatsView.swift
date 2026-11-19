@@ -248,6 +248,7 @@ struct StatsView: View {
                 )
             }
             .frame(height: 190)
+        }
         .cardStyle(padding: 16)
     }
 
