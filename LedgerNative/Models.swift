@@ -320,10 +320,13 @@ struct RecordGroup: Identifiable, Hashable {
         return member.isEmpty ? "拆分 \(records.count) 笔" : "\(member) · \(records.count) 笔"
     }
     var subtitle: String {
+        let member = first.member.trimmingCharacters(in: .whitespacesAndNewlines)
         if isSplit {
             let cats = records.map(\.category).filter { !$0.isEmpty }
             let joined = cats.prefix(3).joined(separator: " · ")
-            var parts = ["拆分 \(records.count) 笔"]
+            var parts: [String] = []
+            if !member.isEmpty { parts.append(member) }
+            parts.append("拆分 \(records.count) 笔")
             if !joined.isEmpty { parts.append(joined) }
             if cats.count > 3 { parts.append("等 \(cats.count) 类") }
             return parts.joined(separator: " · ")

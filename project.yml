@@ -10,8 +10,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     PRODUCT_BUNDLE_IDENTIFIER: com.ll205.ledgernative
-    MARKETING_VERSION: "1.2.7"
-    CURRENT_PROJECT_VERSION: "29"
+    MARKETING_VERSION: "1.2.8"
+    CURRENT_PROJECT_VERSION: "30"
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGNING_REQUIRED: NO
@@ -42,3 +42,4 @@ schemes:
       config: Debug
     archive:
       config: Release
+

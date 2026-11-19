@@ -85,8 +85,12 @@ struct RecordRow: View {
                     if showsDate {
                         Text(shortDate(record.date))
                     }
+                    if !record.member.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(showsDate ? "· \(record.member)" : record.member)
+                            .lineLimit(1)
+                    }
                     if !record.note.isEmpty {
-                        Text("· \(record.note)")
+                        Text((showsDate || !record.member.isEmpty) ? "· \(record.note)" : record.note)
                             .lineLimit(1)
                     }
                 }
