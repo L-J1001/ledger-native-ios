@@ -264,7 +264,7 @@ struct SettingsView: View {
     }
 
     private var supportSection: some View {
-        Section("帮助与支持") {
+        Section {
             NavigationLink {
                 HealthView()
                     .environmentObject(store)
@@ -277,6 +277,8 @@ struct SettingsView: View {
             } label: {
                 Label("意见反馈", systemImage: "bubble.left.and.bubble.right")
             }
+        } header: {
+            Text("帮助与支持")
         } footer: {
             Text("反馈匿名提交；数据体检只在本机运行，不上传账目。")
         }
