@@ -223,7 +223,7 @@ struct StatsView: View {
                             guard abs(value.translation.width) > abs(value.translation.height) else { return }
                             var dx = value.translation.width
                             // 已在本期时往“更新”方向轻拉只给一点点位移，松手回弹。
-                            if dx > 0 && offset <= 0 { dx *= 0.32 }
+                            if dx > 0 && offset == 0 { dx *= 0.32 }
                             dragX = dx
                         }
                         .onEnded { value in
@@ -234,7 +234,7 @@ struct StatsView: View {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragX = 0 }
                                 return
                             }
-                            if !forward && offset <= 0 {
+                            if !forward && offset == 0 {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { dragX = 0 }
                                 return
                             }
