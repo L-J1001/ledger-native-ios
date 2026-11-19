@@ -447,15 +447,22 @@ struct StatsView: View {
     /// 按天翻页一次走一天（趋势图仍固定显示含今天在内的 7 天，翻页只挪汇总日）。
     private var dayStep: Int { 1 }
 
+    /// 按天时的趋势窗口右端：只要所选日还落在「含今天最近 7 天」里，右端就固定是今天，
+    /// 这样一天一天往回翻时柱状图不会跟着整体平移；只有翻到更早的日期才把窗口挪过去。
+    private var dayWindowEnd: Date {
+        let recentStart = cal.date(byAdding: .day, value: -6, to: today) ?? today
+        return clampedAnchor < recentStart ? clampedAnchor : today
+    }
+
     private var windowStart: Date {
         switch range {
-        case .day: return cal.date(byAdding: .day, value: -6, to: clampedAnchor) ?? clampedAnchor
+        case .day: return cal.date(byAdding: .day, value: -6, to: dayWindowEnd) ?? dayWindowEnd
         case .month: return cal.date(byAdding: .month, value: -5, to: periodStartDate) ?? periodStartDate
         case .year: return cal.date(byAdding: .year, value: -4, to: periodStartDate) ?? periodStartDate
         }
     }
 
-    private var windowEnd: Date { periodEnd }
+    private var windowEnd: Date { range == .day ? dayWindowEnd : periodEnd }
 
     private var windowNote: String {
         switch range {
