@@ -276,7 +276,9 @@ final class LedgerStore: ObservableObject {
             if let group = record.splitGroup, !group.isEmpty {
                 // 同一次拆分按「记账人」再收口：一个人名下的几笔合成一行，
                 // 不再把每个明细行铺成独立流水，也不会把两个人的项目混在一行。
-                key = "split:\(group):\(record.member)"
+                // 日期一起进 key：万一历史数据里多个批次共用同一个 split_group，
+                // 也只会各成一行，不会把几十笔并成一张卡。
+                key = "split:\(group):\(record.member):\(record.date)"
             } else {
                 key = "one:\(record.id)"
             }

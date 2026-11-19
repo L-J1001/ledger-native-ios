@@ -5,13 +5,22 @@ struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
 
     private enum StatsRange: String, CaseIterable, Identifiable {
-        case week = "近 7 天"
-        case month = "近 1 个月"
-        case year = "近 1 年"
+        case day = "按天"
+        case month = "按月"
+        case year = "按年"
         var id: String { rawValue }
+
+        /// 图表每一段代表的时间粒度，与区间本身区分开。
+        var precision: String {
+            switch self {
+            case .day: return "每天一格"
+            case .month: return "每月一格"
+            case .year: return "每年一格"
+            }
+        }
     }
 
-    @State private var range: StatsRange = .week
+    @State private var range: StatsRange = .day
     @State private var offset = 0
     @State private var dragX: CGFloat = 0
 
@@ -175,7 +184,7 @@ struct StatsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("收支趋势")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                    Text("\(periodTitle) · \(range == .year ? "按月" : "按天")")
+                    Text("\(periodTitle) · \(range.precision)")
                         .font(.system(size: 10))
                         .foregroundStyle(AppTheme.textSecondary)
                 }
@@ -218,11 +227,15 @@ struct StatsView: View {
                 .chartXAxis {
                     AxisMarks { value in
                         AxisGridLine().foregroundStyle(AppTheme.hairline)
-                        if range == .year {
+                        switch range {
+                        case .day:
+                            AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
+                                .foregroundStyle(AppTheme.textSecondary)
+                        case .month:
                             AxisValueLabel(format: .dateTime.month(.defaultDigits))
                                 .foregroundStyle(AppTheme.textSecondary)
-                        } else {
-                            AxisValueLabel(format: .dateTime.month(.defaultDigits).day())
+                        case .year:
+                            AxisValueLabel(format: .dateTime.year())
                                 .foregroundStyle(AppTheme.textSecondary)
                         }
                     }
@@ -236,7 +249,7 @@ struct StatsView: View {
                 }
                 .frame(height: 190)
                 .offset(x: dragX)
-                .opacity(1 - min(0.32, Double(abs(dragX)) / 320.0 * 0.5))
+                .opacity(1 - min(0.32, abs(dragX) / 320 * 0.5))
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 12)
                         .onChanged { value in
@@ -329,25 +342,32 @@ struct StatsView: View {
 
     private var periodStart: Date {
         switch range {
-        case .week:
-            return calendar.date(byAdding: .day, value: -6 - offset * 7, to: today) ?? today
+        case .day:
+            let monthStart = startOfMonth(today)
+            return calendar.date(byAdding: .month, value: offset, to: monthStart) ?? monthStart
         case .month:
-            return calendar.date(byAdding: .month, value: -offset, to: startOfMonth(today)) ?? today
+            let yearStart = startOfYear(today)
+            return calendar.date(byAdding: .year, value: offset, to: yearStart) ?? yearStart
         case .year:
-            return calendar.date(byAdding: .year, value: -offset, to: startOfYear(today)) ?? today
+            // 一次看连续 5 年：offset=0 是「今年往前数 5 年」，每往前一段再退 5 年。
+            let endYear = calendar.component(.year, from: today) + offset * 5
+            let endYearStart = calendar.date(from: DateComponents(year: endYear, month: 1, day: 1)) ?? today
+            return calendar.date(byAdding: .year, value: -4, to: endYearStart) ?? endYearStart
         }
     }
 
     private var periodEnd: Date {
         switch range {
-        case .week:
-            return calendar.date(byAdding: .day, value: -offset * 7, to: today) ?? today
+        case .day:
+            if offset == 0 { return today }
+            return endOfMonth(startOfMonth(periodStart))
         case .month:
             if offset == 0 { return today }
-            return endOfMonth(periodStart)
+            return endOfYear(startOfYear(periodStart))
         case .year:
+            let lastYearStart = startOfYear(calendar.date(byAdding: .year, value: 4, to: periodStart) ?? periodStart)
             if offset == 0 { return today }
-            return endOfYear(periodStart)
+            return endOfYear(lastYearStart)
         }
     }
 
@@ -359,14 +379,15 @@ struct StatsView: View {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         switch range {
-        case .week:
-            f.dateFormat = "M月d日"
-            return "\(f.string(from: periodStart)) – \(f.string(from: periodEnd))"
-        case .month:
+        case .day:
             f.dateFormat = "yyyy年M月"
             return f.string(from: periodStart)
-        case .year:
+        case .month:
             return "\(calendar.component(.year, from: periodStart))年"
+        case .year:
+            let startYear = calendar.component(.year, from: periodStart)
+            let endYear = calendar.component(.year, from: periodEnd)
+            return startYear == endYear ? "\(startYear)年" : "\(startYear) – \(endYear)年"
         }
     }
 
@@ -444,11 +465,26 @@ struct StatsView: View {
 
     private var trendPoints: [DayPoint] {
         let records = periodRecords
-        if range == .year {
-            let firstMonth = calendar.component(.month, from: periodStart)
-            let lastMonth = calendar.component(.month, from: periodEnd)
+        switch range {
+        case .year:
+            let firstYear = calendar.component(.year, from: periodStart)
+            let lastYear = calendar.component(.year, from: periodEnd)
+            return (firstYear...max(firstYear, lastYear)).map { year in
+                let key = String(format: "%04d", year)
+                let date = calendar.date(from: DateComponents(year: year, month: 1, day: 1)) ?? periodStart
+                let rows = records.filter { $0.date.hasPrefix(key) }
+                return DayPoint(
+                    id: key,
+                    date: date,
+                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                )
+            }
+        case .month:
             let year = calendar.component(.year, from: periodStart)
-            return (firstMonth...lastMonth).map { month in
+            let lastMonth = (offset == 0 && calendar.component(.year, from: periodEnd) == year)
+                ? calendar.component(.month, from: periodEnd) : 12
+            return (1...max(1, lastMonth)).map { month in
                 let key = String(format: "%04d-%02d", year, month)
                 let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? periodStart
                 let rows = records.filter { $0.date.hasPrefix(key) }
@@ -459,21 +495,22 @@ struct StatsView: View {
                     income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
                 )
             }
+        case .day:
+            var points: [DayPoint] = []
+            var day = periodStart
+            while day <= periodEnd {
+                let key = dateString(day)
+                let rows = records.filter { $0.date == key }
+                points.append(DayPoint(
+                    id: key,
+                    date: day,
+                    expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
+                    income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
+                ))
+                day = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
+            }
+            return points
         }
-        var points: [DayPoint] = []
-        var day = periodStart
-        while day <= periodEnd {
-            let key = dateString(day)
-            let rows = records.filter { $0.date == key }
-            points.append(DayPoint(
-                id: key,
-                date: day,
-                expense: rows.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents },
-                income: rows.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
-            ))
-            day = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
-        }
-        return points
     }
 
     private var categoryPoints: [CategoryPoint] {

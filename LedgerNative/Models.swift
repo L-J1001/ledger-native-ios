@@ -331,7 +331,12 @@ struct RecordGroup: Identifiable, Hashable {
             if cats.count > 3 { parts.append("等 \(cats.count) 类") }
             return parts.joined(separator: " · ")
         }
-        return first.note
+        // 单笔同样显示记账人：桌面端明细里每笔都带人名，手机端不能只在拆分时才显示。
+        var parts: [String] = []
+        if !member.isEmpty { parts.append(member) }
+        let note = first.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty { parts.append(note) }
+        return parts.joined(separator: " · ")
     }
 }
 
