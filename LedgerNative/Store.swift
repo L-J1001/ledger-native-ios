@@ -295,7 +295,14 @@ final class LedgerStore: ObservableObject {
             if lhs.date == rhs.date { return lhs.updatedAt > rhs.updatedAt }
             return lhs.date > rhs.date
         }) {
-            let key = record.splitGroup?.isEmpty == false ? "split:\(record.splitGroup!)" : "one:\(record.id)"
+            let key: String
+            if let group = record.splitGroup, !group.isEmpty {
+                // 同一次拆分按「记账人」再收口：一个人名下的几笔合成一行，
+                // 不再把每个明细行铺成独立流水，也不会把两个人的项目混在一行。
+                key = "split:\(group):\(record.member)"
+            } else {
+                key = "one:\(record.id)"
+            }
             if buckets[key] == nil { order.append(key) }
             buckets[key, default: []].append(record)
         }
@@ -400,7 +407,15 @@ final class LedgerStore: ObservableObject {
     }
 
     func deleteGroup(_ group: RecordGroup) {
-        for record in group.records {
+        // 主行按成员收起后，删除仍然作用于整笔拆分：只删掉某个人那几行
+        // 会把同一次拆分的其余明细留成孤儿。
+        let targets: [LedgerRecord]
+        if let split = group.first.splitGroup, !split.isEmpty {
+            targets = records.filter { $0.bookUid == group.first.bookUid && $0.splitGroup == split }
+        } else {
+            targets = group.records
+        }
+        for record in targets {
             trash.append(record)
             deleteLocal(record)
         }
