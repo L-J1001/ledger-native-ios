@@ -143,7 +143,6 @@ final class LedgerStore: ObservableObject {
 
     // MARK: - 当前账本的成员 / 分类 / 账户
 
-    private static let defaultMembers = ["我", "家人", "共同"]
     private static let defaultExpenseCategories = ["餐饮", "交通", "住宿", "购物", "娱乐", "医疗", "学习", "日用品", "其他"]
     private static let defaultIncomeCategories = ["活动经费", "AA收款", "充值", "其他"]
     private static let defaultAccounts = ["现金", "微信", "支付宝", "银行卡"]
@@ -175,10 +174,15 @@ final class LedgerStore: ObservableObject {
     var memberOptions: [String] {
         let bookID = writeBookID
         let custom = taxonomy(for: bookID).members
-        let used = records.filter { $0.bookUid == bookID }.map(\.member).filter { !$0.isEmpty }
-        let base = (custom.isEmpty && used.isEmpty) ? Self.defaultMembers : custom
+        let used = records
+            .filter { $0.bookUid == bookID }
+            .map(\.member)
+            .filter { !$0.isEmpty && $0 != "我" }
+        // 成员只认云端同步下发和用户自己新增的，不再生成任何占位成员。
         var seen = Set<String>()
-        return (base + used).filter { seen.insert($0).inserted }
+        return (custom + used)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0 != "我" }
+            .filter { seen.insert($0).inserted }
     }
 
     var accountOptions: [String] {

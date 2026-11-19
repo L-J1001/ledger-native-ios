@@ -148,7 +148,7 @@ struct LedgerRecord: Codable, Identifiable, Hashable {
         amountCents = try c.decodeIfPresent(Int.self, forKey: .amountCents) ?? 0
         category = try c.decodeIfPresent(String.self, forKey: .category) ?? "未分类"
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
-        member = try c.decodeIfPresent(String.self, forKey: .member) ?? "我"
+        member = try c.decodeIfPresent(String.self, forKey: .member) ?? ""
         account = try c.decodeIfPresent(String.self, forKey: .account) ?? ""
         groupNote = try c.decodeIfPresent(String.self, forKey: .groupNote) ?? ""
         splitGroup = try c.decodeIfPresent(String.self, forKey: .splitGroup)
@@ -168,7 +168,7 @@ struct LedgerRecord: Codable, Identifiable, Hashable {
             amountCents: max(0, cents),
             category: payload.category?.isEmpty == false ? payload.category! : "未分类",
             note: payload.note ?? "",
-            member: payload.member?.isEmpty == false ? payload.member! : "我",
+            member: payload.member?.isEmpty == false ? payload.member! : "",
             account: payload.account ?? "",
             groupNote: payload.groupNote ?? "",
             splitGroup: splitGroup ?? payload.splitGroup,

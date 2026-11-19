@@ -31,7 +31,7 @@ struct RecordEditorView: View {
         _date = State(initialValue: record?.dateValue ?? Date())
         _category = State(initialValue: record?.category ?? "餐饮")
         _note = State(initialValue: record?.note ?? "")
-        _member = State(initialValue: record?.member ?? "我")
+        _member = State(initialValue: (record?.member == "我" ? "" : record?.member) ?? "")
         _account = State(initialValue: record?.account ?? "")
         _splitEnabled = State(initialValue: record?.splitGroup != nil)
         _splitLines = State(initialValue: [])
@@ -135,6 +135,10 @@ struct RecordEditorView: View {
         } else if editing == nil {
             splitLines = [SplitLine(category: category, amountText: "", note: "")]
             amountFocused = true
+        }
+        if member.isEmpty || member == "我",
+           let first = store.memberOptions.first {
+            member = first
         }
     }
 
@@ -490,7 +494,7 @@ struct RecordEditorView: View {
 
     private var memberChoices: [String] {
         var base = store.memberOptions
-        if !member.isEmpty, !base.contains(member) { base.insert(member, at: 0) }
+        if !member.isEmpty, member != "我", !base.contains(member) { base.insert(member, at: 0) }
         return base
     }
 
@@ -529,6 +533,12 @@ struct RecordEditorView: View {
             showError = true
             return
         }
+        let who = member.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !who.isEmpty, who != "我" else {
+            errorMessage = "请先选择成员；如果列表为空，请到设置 → 成员管理里添加或同步成员"
+            showError = true
+            return
+        }
 
         let old: [LedgerRecord] = {
             guard let editing else { return [] }
@@ -546,7 +556,7 @@ struct RecordEditorView: View {
             amountCents: cents,
             category: category.isEmpty ? "未分类" : category,
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-            member: member.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "我" : member,
+            member: member.trimmingCharacters(in: .whitespacesAndNewlines),
             account: account.trimmingCharacters(in: .whitespacesAndNewlines),
             groupNote: "",
             splitGroup: nil,
@@ -581,6 +591,12 @@ struct RecordEditorView: View {
             showError = true
             return
         }
+        let who = member.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !who.isEmpty, who != "我" else {
+            errorMessage = "请先选择成员；如果列表为空，请到设置 → 成员管理里添加或同步成员"
+            showError = true
+            return
+        }
 
         let group = editing?.splitGroup?.isEmpty == false
             ? editing!.splitGroup!
@@ -603,7 +619,7 @@ struct RecordEditorView: View {
                 amountCents: cents(from: line.amountText) ?? 0,
                 category: line.category,
                 note: line.note.trimmingCharacters(in: .whitespacesAndNewlines),
-                member: member.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "我" : member,
+                member: member.trimmingCharacters(in: .whitespacesAndNewlines),
                 account: account.trimmingCharacters(in: .whitespacesAndNewlines),
                 groupNote: groupNote.trimmingCharacters(in: .whitespacesAndNewlines),
                 splitGroup: group,

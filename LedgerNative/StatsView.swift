@@ -238,17 +238,24 @@ struct StatsView: View {
 
     private var dailyPoints: [DayPoint] {
         let calendar = Calendar.current
-        let monthEnd = calendar.date(byAdding: .month, value: 1, to: selectedMonthDate) ?? selectedMonthDate
-        let lastDay = calendar.date(byAdding: .day, value: -1, to: monthEnd) ?? selectedMonthDate
-        let points = (0..<7).compactMap { offset -> DayPoint? in
-            guard let day = calendar.date(byAdding: .day, value: -6 + offset, to: lastDay) else { return nil }
+        // 最近 7 天必须锚在“今天”；只有看历史月份时才锚到那个月的月末。
+        // 原来的写法在当月也锚月末，日期落在未来，所以列表永远是空的。
+        let anchor: Date
+        if monthOffset == 0 {
+            anchor = Date()
+        } else {
+            let monthEnd = calendar.date(byAdding: .month, value: 1, to: selectedMonthDate) ?? selectedMonthDate
+            anchor = calendar.date(byAdding: .day, value: -1, to: monthEnd) ?? selectedMonthDate
+        }
+        let bookRecords = store.records.filter { $0.bookUid == store.writeBookID }
+        return (0..<7).map { offset -> DayPoint in
+            let day = calendar.date(byAdding: .day, value: -6 + offset, to: anchor) ?? anchor
             let key = dateString(day)
-            let dayRecords = monthRecords.filter { $0.date == key }
+            let dayRecords = bookRecords.filter { $0.date == key }
             let expense = dayRecords.filter { $0.direction == .expense }.reduce(0) { $0 + $1.amountCents }
             let income = dayRecords.filter { $0.direction == .income }.reduce(0) { $0 + $1.amountCents }
             return DayPoint(id: key, date: day, expense: expense, income: income)
         }
-        return points.filter { $0.expense + $0.income > 0 }
     }
 
     private var categoryPoints: [CategoryPoint] {
