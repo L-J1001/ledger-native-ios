@@ -121,7 +121,7 @@ struct StatsView: View {
                         .foregroundStyle(AppTheme.textSecondary)
                     Text(item.1)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(AppTheme.textPrimary)
+                        .foregroundStyle(.primary)
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
