@@ -426,10 +426,15 @@ struct RecordsView: View {
     }
 
     private var displayGroups: [RecordsDayGroup] {
-        store.groups(for: store.writeBookID)
-            .filter { inDateScope($0.date) }
-            .sorted { $0.date > $1.date }
-            .map { RecordsDayGroup(date: $0.date, entries: $0.entries) }
+        let groups = store.groups(for: store.writeBookID).filter { inDateScope($0.date) }
+        let byDate = Dictionary(grouping: groups, by: { $0.date })
+        return byDate.keys.sorted(by: >).map { date in
+            let entries = (byDate[date] ?? []).sorted { lhs, rhs in
+                if lhs.first.updatedAt == rhs.first.updatedAt { return lhs.id > rhs.id }
+                return lhs.first.updatedAt > rhs.first.updatedAt
+            }
+            return RecordsDayGroup(date: date, entries: entries)
+        }
     }
 
     private struct RecordsDayGroup: Identifiable {
