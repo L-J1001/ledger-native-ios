@@ -5,7 +5,7 @@ import Charts
 /// · 按天：所选那一天 → 汇总只算这一天；趋势图＝含所选那天在内的最近 7 天
 /// · 按月：所选那个月 → 汇总只算这个月；趋势图＝含本月在内的最近 6 个月
 /// · 按年：所选那一年 → 汇总只算这一年；趋势图＝含今年在内的最近 5 年，共 5 根
-/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时给「回到今天」胶囊，双击日期同效。
+/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时双击日期回到今天，不再额外占用一行按钮。
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
     @AppStorage("stats_range") private var storedRange: String = "day"
@@ -59,9 +59,6 @@ struct StatsView: View {
                 VStack(spacing: 14) {
                     rangePicker
                     periodHeader
-                    if !atLatest {
-                        backTodayCapsule
-                    }
                     summaryCard
                     factsCard
                     trendCard
@@ -136,23 +133,6 @@ struct StatsView: View {
         }
         .buttonStyle(PressableButtonStyle())
         .allowsHitTesting(enabled)
-    }
-
-    private var backTodayCapsule: some View {
-        Button {
-            backToToday()
-        } label: {
-            Text("回到今天")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(AppTheme.accentSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(PressableButtonStyle())
-        .frame(maxWidth: .infinity, alignment: .center)
-        .transition(.opacity.combined(with: .scale(scale: 0.94)))
     }
 
     /* ---------------- 卡片 ---------------- */
