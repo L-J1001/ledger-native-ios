@@ -8,6 +8,7 @@ struct RecordsView: View {
     @State private var memberFilter = "全部"
     @State private var categoryFilter = "全部"
     @State private var accountFilter = "全部"
+    @State private var onlyExcluded = false
     @State private var showEditor = false
     @State private var editingRecord: LedgerRecord?
 
@@ -121,6 +122,7 @@ struct RecordsView: View {
                 memberFilter = "全部"
                 categoryFilter = "全部"
                 accountFilter = "全部"
+                onlyExcluded = false
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -159,6 +161,18 @@ struct RecordsView: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
+                Button {
+                    onlyExcluded.toggle()
+                } label: {
+                    Text("不计入")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(onlyExcluded ? Color.white : AppTheme.textSecondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(onlyExcluded ? AppTheme.accent : AppTheme.card)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
                 Text("\(groups.reduce(0) { $0 + $1.recordCount }) 条")
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
@@ -219,6 +233,9 @@ struct RecordsView: View {
         }
         if accountFilter != "全部" {
             entries = entries.filter { $0.records.contains { $0.account == accountFilter } }
+        }
+        if onlyExcluded {
+            entries = entries.filter { $0.records.contains { $0.excludeTotal } }
         }
         let keyword = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !keyword.isEmpty {
