@@ -304,8 +304,9 @@ struct StatsView: View {
         }
         if result.last != count - 1 { result.append(count - 1) }
         if result.count > 2 {
+            let snapshot = result
             result.removeAll { idx in
-                idx != 0 && idx != count - 1 && result.contains(idx - 1) && result.contains(idx + 1)
+                idx != 0 && idx != count - 1 && snapshot.contains(idx - 1) && snapshot.contains(idx + 1)
             }
         }
         return result
