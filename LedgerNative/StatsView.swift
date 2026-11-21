@@ -645,6 +645,18 @@ struct StatsView: View {
         return f.string(from: date)
     }
 
+    /// 支出分类：只算本期支出，按金额排序，最多 8 类。
+    private var categoryPoints: [CategoryPoint] {
+        let expenses = periodRecords.filter { $0.direction == .expense }
+        let grouped = Dictionary(grouping: expenses, by: { $0.category.isEmpty ? "未分类" : $0.category })
+            .mapValues { $0.reduce(0) { $0 + $1.amountCents } }
+        let total = max(1, grouped.values.reduce(0, +))
+        return grouped
+            .sorted { $0.value > $1.value }
+            .prefix(8)
+            .map { CategoryPoint(name: $0.key, cents: $0.value, ratio: Double($0.value) / Double(total)) }
+    }
+
     private var memberPoints: [CategoryPoint] {
         let expenses = periodRecords.filter { $0.direction == .expense }
         let grouped = Dictionary(grouping: expenses, by: { $0.member.isEmpty ? "未指定成员" : $0.member })
