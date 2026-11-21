@@ -59,6 +59,7 @@ struct RecordGroupRow: View {
 struct RecordRow: View {
     let record: LedgerRecord
     var showsDate: Bool = true
+    var splitLabel: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -75,6 +76,24 @@ struct RecordRow: View {
                 HStack(spacing: 6) {
                     Text(record.category.isEmpty ? "未分类" : record.category)
                         .font(.system(size: 15, weight: .semibold))
+                    if let splitLabel {
+                        Text(splitLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.accentSoft)
+                            .clipShape(Capsule())
+                    }
+                    if record.excludeTotal {
+                        Text("不计入")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(AppTheme.textSecondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.card)
+                            .clipShape(Capsule())
+                    }
                     if record.pending {
                         Circle()
                             .fill(Color.orange)
@@ -102,7 +121,9 @@ struct RecordRow: View {
 
             Text("\(record.direction.sign)\(money(record.amountCents))")
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(record.direction == .expense ? AppTheme.expense : AppTheme.income)
+                .foregroundStyle(record.excludeTotal
+                    ? AppTheme.textSecondary
+                    : (record.direction == .expense ? AppTheme.expense : AppTheme.income))
                 .monospacedDigit()
         }
         .padding(.vertical, 10)

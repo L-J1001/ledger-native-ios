@@ -19,7 +19,7 @@ final class LedgerStore: ObservableObject {
     private let persistence = Persistence()
     private let sync = SyncService.shared
     private var cursor: Int64 = 0
-    private var selectedBookID: String?
+    @Published private var selectedBookID: String?
     private var deviceID: String = ""
     private var token: String?
 
