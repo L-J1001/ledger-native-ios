@@ -2,10 +2,10 @@ import SwiftUI
 import Charts
 
 /// 统计页：三端口径统一（iPhone / iPad / 安卓 / PWA 完全一致）
-/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝含所选那天在内的最近 7 天
-/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝含本月在内的最近 6 个月
-/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝含今年在内的最近 5 年，共 5 根
-/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时双击日期回到今天，不再额外占用一行按钮。
+/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝这一天往前推 30 天（含当天）
+/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝这个月往前推 12 个月（含本月）
+/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝今年往前推 5 年（含今年），共 6 根
+/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时双击日期即可回到今天。
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
     @AppStorage("stats_range") private var storedRange: String = "day"
@@ -63,6 +63,7 @@ struct StatsView: View {
                     factsCard
                     trendCard
                     categoryCard
+                    memberCard
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 4)
@@ -250,8 +251,8 @@ struct StatsView: View {
             .foregroundStyle(AppTheme.expense)
             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
             .interpolationMethod(points.count > 2 ? .catmullRom : .linear)
-            .symbol(Circle())
-            .symbolSize(CGFloat(points.count > 24 ? 6 : 10))
+            .symbol(.circle)
+            .symbolSize(points.count > 24 ? 6 : 10)
 
             LineMark(
                 x: .value("格", point.index),
@@ -260,8 +261,8 @@ struct StatsView: View {
             .foregroundStyle(AppTheme.income)
             .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round))
             .interpolationMethod(points.count > 2 ? .catmullRom : .linear)
-            .symbol(Circle())
-            .symbolSize(CGFloat(points.count > 24 ? 6 : 10))
+            .symbol(.circle)
+            .symbolSize(points.count > 24 ? 6 : 10)
         }
         .chartXScale(domain: -0.5...(Double(max(1, points.count)) - 0.5))
         .chartXAxis {
@@ -303,10 +304,8 @@ struct StatsView: View {
         }
         if result.last != count - 1 { result.append(count - 1) }
         if result.count > 2 {
-            let picked = Set(result)
-            result = result.filter { idx in
-                if idx == 0 || idx == count - 1 { return true }
-                return !(picked.contains(idx - 1) && picked.contains(idx + 1))
+            result.removeAll { idx in
+                idx != 0 && idx != count - 1 && result.contains(idx - 1) && result.contains(idx + 1)
             }
         }
         return result
@@ -362,6 +361,51 @@ struct StatsView: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.25), value: periodTitle)
+            }
+        }
+        .cardStyle(padding: 16)
+    }
+
+    /// 成员支出：与安卓/PWA 同口径，只算本期支出，按金额排序。
+    private var memberCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("成员支出")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+            if memberPoints.isEmpty {
+                Text("这个区间还没有成员支出")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 90)
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(memberPoints) { point in
+                        HStack(spacing: 10) {
+                            Text(point.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .frame(width: 58, alignment: .leading)
+                                .lineLimit(1)
+                            GeometryReader { proxy in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(AppTheme.hairline)
+                                    Capsule()
+                                        .fill(AppTheme.expense)
+                                        .frame(width: max(6, proxy.size.width * point.ratio))
+                                }
+                            }
+                            .frame(height: 7)
+                            Text(money(point.cents))
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundStyle(AppTheme.textSecondary)
+                                .monospacedDigit()
+                                .frame(width: 78, alignment: .trailing)
+                            Text("\(Int((point.ratio * 100).rounded()))%")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(AppTheme.textSecondary)
+                                .monospacedDigit()
+                                .frame(width: 36, alignment: .trailing)
+                        }
+                    }
+                }
             }
         }
         .cardStyle(padding: 16)
@@ -424,48 +468,26 @@ struct StatsView: View {
     private var periodStartDate: Date { periodStart(clampedAnchor) }
     private var periodEnd: Date { max(periodStartDate, periodEndDate(clampedAnchor)) }
     private var periodDays: Int { max(1, (cal.dateComponents([.day], from: periodStartDate, to: periodEnd).day ?? 0) + 1) }
-    /// 按天翻页一次走一天（趋势图仍固定显示含今天在内的 7 天，翻页只挪汇总日）。
-    private var dayStep: Int { 1 }
-
-    /// 趋势窗口右端：只要所选区间还落在「含今天的那段窗口」里，右端就钉在今天所在的那一格，
-    /// 往回翻页时柱状图不会跟着整体平移；只有翻到窗口之外，整排柱子才挪过去。
-    private var dayWindowEnd: Date {
-        let recentStart = cal.date(byAdding: .day, value: -6, to: today) ?? today
-        return clampedAnchor < recentStart ? clampedAnchor : today
-    }
-
-    private var monthWindowEnd: Date {
-        let recentStart = cal.date(byAdding: .month, value: -5, to: startOfMonth(today)) ?? startOfMonth(today)
-        return clampedAnchor < recentStart ? startOfMonth(clampedAnchor) : startOfMonth(today)
-    }
-
-    private var yearWindowEnd: Date {
-        let recentStart = cal.date(byAdding: .year, value: -4, to: startOfYear(today)) ?? startOfYear(today)
-        return clampedAnchor < recentStart ? startOfYear(clampedAnchor) : startOfYear(today)
-    }
-
-    /// 窗口右端所落在的那一格（日 / 月 / 年的月末）
-    private var windowEnd: Date {
-        switch range {
-        case .day: return dayWindowEnd
-        case .month: return min(endOfMonth(monthWindowEnd), today)
-        case .year: return min(endOfYear(yearWindowEnd), today)
-        }
-    }
+    /// 按天翻页一次走一周：一天一天点太累，双击日期或胶囊可以直接回今天。
+    private var dayStep: Int { 7 }
 
     private var windowStart: Date {
         switch range {
-        case .day: return cal.date(byAdding: .day, value: -6, to: dayWindowEnd) ?? dayWindowEnd
-        case .month: return cal.date(byAdding: .month, value: -5, to: monthWindowEnd) ?? monthWindowEnd
-        case .year: return cal.date(byAdding: .year, value: -4, to: yearWindowEnd) ?? yearWindowEnd
+        case .day: return cal.date(byAdding: .day, value: -29, to: clampedAnchor) ?? clampedAnchor
+        case .month: return cal.date(byAdding: .month, value: -11, to: periodStartDate) ?? periodStartDate
+        case .year: return cal.date(byAdding: .year, value: -5, to: periodStartDate) ?? periodStartDate
         }
     }
 
+    private var windowEnd: Date { periodEnd }
+
     private var windowNote: String {
         switch range {
-        case .day: return "近 7 天"
-        case .month: return "近 6 个月"
-        case .year: return "近 5 年"
+        case .day: return "近 30 天"
+        case .month:
+            let months = (cal.dateComponents([.month], from: windowStart, to: windowEnd).month ?? 11) + 1
+            return "近 \(min(12, max(1, months))) 个月"
+        case .year: return "近 6 年"
         }
     }
 
@@ -623,9 +645,9 @@ struct StatsView: View {
         return f.string(from: date)
     }
 
-    private var categoryPoints: [CategoryPoint] {
+    private var memberPoints: [CategoryPoint] {
         let expenses = periodRecords.filter { $0.direction == .expense }
-        let grouped = Dictionary(grouping: expenses, by: { $0.category.isEmpty ? "未分类" : $0.category })
+        let grouped = Dictionary(grouping: expenses, by: { $0.member.isEmpty ? "未指定成员" : $0.member })
             .mapValues { $0.reduce(0) { $0 + $1.amountCents } }
         let total = max(1, grouped.values.reduce(0, +))
         return grouped

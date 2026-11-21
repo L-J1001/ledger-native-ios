@@ -338,6 +338,30 @@ final class LedgerStore: ObservableObject {
         return nil
     }
 
+    /// 删除账本：本地先清空，再写一条 book_delete 墓碑。
+    /// 不允许删除当前正在写的账本，避免界面落在空目录上。
+    func deleteBook(id: String) -> String? {
+        guard id != selectedBookID else { return "请先切换到另一本账本" }
+        guard books.contains(where: { $0.id == id }) else { return "账本不存在" }
+        removeLocalBook(id)
+        outbox.removeAll { $0.bookUid == id }
+        outbox.append(OutboxOp(
+            id: ULID.generate(), bookUid: id, entity: "book",
+            entityUid: id, op: "book_delete", payload: nil,
+            updatedAt: nowMillis(), deviceId: deviceID, splitGroup: nil
+        ))
+        save()
+        Task { await syncNow() }
+        return nil
+    }
+
+    private func removeLocalBook(_ id: String) {
+        records.removeAll { $0.bookUid == id }
+        taxonomies.removeValue(forKey: id)
+        books.removeAll { $0.id == id }
+        if selectedBookID == id { selectedBookID = books.first?.id }
+    }
+
     /// 账本元数据 + 成员/分类/账户一起推。桌面端 /v1/books 会带回 taxonomy，
     /// 手机端新增或移除后也走同一条 op，其他设备下次同步即可看到。
     private func queueBookMeta(for bookID: String, taxonomy: BookTaxonomy?) {
@@ -578,12 +602,17 @@ final class LedgerStore: ObservableObject {
         }
 
         var localSurvivors: [LedgerBook] = []
+        var toRemove: [String] = []
         for local in books where !remoteIDs.contains(local.id) {
-            let empty = !records.contains { $0.bookUid == local.id }
-                && !outbox.contains { $0.bookUid == local.id }
-            if empty && local.id.hasPrefix("bookmeta-") { continue }
-            localSurvivors.append(local)
+            // 云端目录里已经没有这本：只保留还没推上去的新账本，
+            // 其余视为其它设备删除，连同本机账目一起清掉。
+            let pendingCreate = outbox.contains {
+                $0.entity == "book" && $0.bookUid == local.id && $0.op == "book_upsert"
+            }
+            if pendingCreate { localSurvivors.append(local) }
+            else { toRemove.append(local.id) }
         }
+        for id in toRemove { removeLocalBook(id) }
         books = remote + localSurvivors
         if let selectedBookID, books.contains(where: { $0.id == selectedBookID }) {
             self.selectedBookID = selectedBookID
@@ -593,6 +622,12 @@ final class LedgerStore: ObservableObject {
     }
 
     private func apply(_ op: RemoteOp) {
+        if op.entity == "book" {
+            if op.op == "book_delete" || op.op == "delete" {
+                removeLocalBook(op.bookUid)
+            }
+            return
+        }
         guard op.entity == "record" else { return }
         if op.op == "delete" {
             records.removeAll { $0.id == op.entityUid && $0.bookUid == op.bookUid }

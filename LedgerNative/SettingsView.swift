@@ -4,8 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: LedgerStore
     @State private var showLogin = false
     @State private var bookTarget: BookEditorTarget?
-    /// 外观三态，和安卓 / PWA 用同一个键名和同一套口径。
-    @AppStorage("theme_mode") private var themeMode: String = "system"
+    @State private var pendingDeleteBook: LedgerBook?
 
     var body: some View {
         NavigationStack {
@@ -14,7 +13,6 @@ struct SettingsView: View {
                 syncSection
                 booksSection
                 taxonomySection
-                appearanceSection
                 trashSection
                 dataSection
                 supportSection
@@ -44,6 +42,18 @@ struct SettingsView: View {
                         }
                 }
                 .presentationDetents([.medium, .large])
+            }
+            .alert("删除账本？", isPresented: Binding(
+                get: { pendingDeleteBook != nil },
+                set: { if !$0 { pendingDeleteBook = nil } }
+            ), presenting: pendingDeleteBook) { book in
+                Button("永久删除", role: .destructive) {
+                    _ = store.deleteBook(id: book.id)
+                    pendingDeleteBook = nil
+                }
+                Button("取消", role: .cancel) { pendingDeleteBook = nil }
+            } message: { book in
+                Text("「\(book.name)」的本机账目会清空，并同步删除到其它设备，无法恢复。")
             }
         }
     }
@@ -189,6 +199,15 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.borderless)
                 }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if store.selectedBook?.id != book.id {
+                        Button(role: .destructive) {
+                            pendingDeleteBook = book
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
+                }
             }
 
             Button {
@@ -228,21 +247,6 @@ struct SettingsView: View {
             Text("当前账本 · 选项")
         } footer: {
             Text("记账时只从这些选项里选，不再手输；桌面端记录里用过的值同步后会自动出现。")
-        }
-    }
-
-    private var appearanceSection: some View {
-        Section {
-            Picker("外观", selection: $themeMode) {
-                Text("浅色").tag("light")
-                Text("深色").tag("dark")
-                Text("跟随系统").tag("system")
-            }
-            .pickerStyle(.segmented)
-        } header: {
-            Text("外观")
-        } footer: {
-            Text("深色模式整页生效，图例、卡片、图表都会跟着换色；跟随系统时由 iOS 的深浅设置决定。")
         }
     }
 
@@ -299,6 +303,43 @@ struct SettingsView: View {
         return build.isEmpty ? "\(short) · 原生 SwiftUI" : "\(short) (\(build)) · 原生 SwiftUI"
     }
 
+    /// 从包内 embedded.mobileprovision 读取签名到期日。
+    /// 免签 IPA 有效期由描述文件决定，直接看系统返回的签名信息并不可靠。
+    private var provisionExpiration: Date? {
+        guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
+              let data = FileManager.default.contents(atPath: path) else { return nil }
+        // 描述文件外层是 CMS 签名，不能整段按 UTF-8 解码；
+        // 先定位 plist 的 key，再只解码它后面一小段。
+        let marker = Data("<key>ExpirationDate</key>".utf8)
+        guard let range = data.range(of: marker) else { return nil }
+        let tailEnd = min(data.count, range.upperBound + 220)
+        let tailData = data.subdata(in: range.upperBound..<tailEnd)
+        guard let tail = String(data: tailData, encoding: .utf8),
+              let start = tail.range(of: "<date>"),
+              let end = tail.range(of: "</date>") else { return nil }
+        let raw = String(tail[start.upperBound..<end.lowerBound])
+        let iso = ISO8601DateFormatter()
+        return iso.date(from: raw)
+    }
+
+    private var signatureExpired: Bool {
+        guard let date = provisionExpiration else { return false }
+        return date < Date()
+    }
+
+    private var signatureRemainingText: String {
+        guard let date = provisionExpiration else { return "读取不到描述文件有效期" }
+        let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()),
+                                                   to: Calendar.current.startOfDay(for: date)).day ?? 0
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy-MM-dd"
+        let expiry = f.string(from: date)
+        if days < 0 { return "已过期 · \(expiry)" }
+        if days == 0 { return "今天到期 · \(expiry)" }
+        return "剩余 \(days) 天 · \(expiry) 到期"
+    }
+
     private var aboutSection: some View {
         Section("关于") {
             HStack {
@@ -314,6 +355,13 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.textSecondary)
                     .lineLimit(1)
+            }
+            HStack {
+                Text("签名剩余")
+                Spacer()
+                Text(signatureRemainingText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(signatureExpired ? AppTheme.expense : AppTheme.textSecondary)
             }
             Text("这是自用 IPA。免费 Apple ID 签名 7 天有效，到期用 Sideloadly 覆盖安装即可，数据保留。")
                 .font(.system(size: 12))

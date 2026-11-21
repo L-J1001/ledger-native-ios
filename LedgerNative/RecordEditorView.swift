@@ -22,9 +22,6 @@ struct RecordEditorView: View {
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var savedHint = false
-    @State private var attachments: [LedgerAttachment] = []
-    @State private var showImporter = false
-    @State private var previewing: LedgerAttachment?
     @FocusState private var amountFocused: Bool
 
     init(record: LedgerRecord? = nil) {
@@ -60,7 +57,6 @@ struct RecordEditorView: View {
                         categoryCard
                     }
                     noteCard
-                    attachmentCard
                     excludeCard
                     actionButtons
                 }
@@ -73,35 +69,6 @@ struct RecordEditorView: View {
             .background(AppTheme.grouped.ignoresSafeArea())
             .scrollIndicators(.hidden)
             .onAppear(perform: loadSplitIfNeeded)
-            .onAppear {
-                attachments = LedgerAttachments.load(key: attachmentKey)
-            }
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.image, .pdf, .data],
-                          allowsMultipleSelection: true) { result in
-                switch result {
-                case .success(let urls):
-                    var failed = 0
-                    for url in urls {
-                        if attachments.count >= LedgerAttachments.maxCount { break }
-                        if let item = LedgerAttachments.importFile(from: url) {
-                            attachments.append(item)
-                        } else {
-                            failed += 1
-                        }
-                    }
-                    if failed > 0 {
-                        errorMessage = "\(failed) 个文件没有添加成功（单个上限 10MB）"
-                        showError = true
-                    }
-                case .failure:
-                    errorMessage = "没有选到文件"
-                    showError = true
-                }
-            }
-            .sheet(item: $previewing) { item in
-                AttachmentPreviewSheet(item: item)
-            }
             .onChange(of: direction) { _, newValue in
                 let options = store.categories(for: newValue)
                 if !options.contains(category), let first = options.first { category = first }
@@ -476,73 +443,6 @@ struct RecordEditorView: View {
         .cardStyle(padding: 14)
     }
 
-    private var attachmentKey: String {
-        guard let editing else { return "" }
-        if let group = editing.splitGroup, !group.isEmpty { return group }
-        return editing.id
-    }
-
-    private var attachmentCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("附件", systemImage: "paperclip")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                Spacer()
-                Button {
-                    showImporter = true
-                } label: {
-                    Text("＋ 添加")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                }
-                .buttonStyle(.plain)
-            }
-            Text("照片 / 票据 / PDF · 只存本机，不随同步上传")
-                .font(.system(size: 11))
-                .foregroundStyle(AppTheme.textSecondary)
-
-            if attachments.isEmpty {
-                Text("还没有附件")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AppTheme.textSecondary)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(attachments) { item in
-                        HStack(spacing: 10) {
-                            Image(systemName: item.isImage ? "photo" : "doc.text")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(AppTheme.accent)
-                                .frame(width: 30, height: 30)
-                                .background(AppTheme.accentSoft)
-                                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name)
-                                    .font(.system(size: 13))
-                                    .lineLimit(1)
-                                Text("\(item.sizeText) · 点按预览")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(AppTheme.textSecondary)
-                            }
-                            Spacer()
-                            Button {
-                                attachments.removeAll { $0.id == item.id }
-                                try? FileManager.default.removeItem(at: LedgerAttachments.url(for: item))
-                            } label: {
-                                Text("移除")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(AppTheme.expense)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture { previewing = item }
-                    }
-                }
-            }
-        }
-        .cardStyle(padding: 16)
-    }
-
     private var noteCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(splitEnabled ? "整笔备注" : "备注")
@@ -689,10 +589,6 @@ struct RecordEditorView: View {
             updatedAt: nowMillis(),
             pending: true
         )
-        if let oldEditing = editing, let group = oldEditing.splitGroup, !group.isEmpty {
-            LedgerAttachments.save(key: group, [])
-        }
-        LedgerAttachments.save(key: record.id, attachments)
         store.replaceRecords([record], removing: old)
         finishSave(continueAfter: continueAfter)
     }
@@ -755,10 +651,6 @@ struct RecordEditorView: View {
                 pending: true
             )
         }
-        if let oldEditing = editing, oldEditing.splitGroup == nil || oldEditing.splitGroup!.isEmpty {
-            LedgerAttachments.save(key: oldEditing.id, [])
-        }
-        LedgerAttachments.save(key: group, attachments)
         store.replaceRecords(newRecords, removing: old)
         finishSave(continueAfter: continueAfter)
     }
