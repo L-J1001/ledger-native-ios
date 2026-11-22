@@ -144,7 +144,7 @@ struct StatsView: View {
             Divider().frame(height: 42)
             summaryMetric(title: "支出", cents: expenseCents, color: AppTheme.expense)
             Divider().frame(height: 42)
-            summaryMetric(title: "结余", cents: incomeCents - expenseCents, color: AppTheme.accent)
+            summaryMetric(title: "收支净额", cents: incomeCents - expenseCents, color: AppTheme.accent)
         }
         .cardStyle(padding: 18)
     }

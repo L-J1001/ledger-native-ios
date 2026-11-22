@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct RecordGroupRow: View {
@@ -138,6 +139,14 @@ struct BalanceHero: View {
     let expenseCents: Int
     let monthTitle: String
 
+    /// 与桌面端同口径：结余标题写具体截止日期，不写“今日/本期”。
+    private var asOfText: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
@@ -145,7 +154,7 @@ struct BalanceHero: View {
                     Text(book?.name ?? "我的账本")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.72))
-                    Text("当前余额")
+                    Text("截至 \(asOfText) 结余")
                         .font(.system(size: 12))
                         .foregroundStyle(.white.opacity(0.55))
                 }
