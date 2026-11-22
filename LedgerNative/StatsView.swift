@@ -2,13 +2,14 @@ import SwiftUI
 import Charts
 
 /// 统计页：三端口径统一（iPhone / iPad / 安卓 / PWA 完全一致）
-/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝这一天往前推 30 天（含当天）
-/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝这个月往前推 12 个月（含本月）
-/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝今年往前推 5 年（含今年），共 6 根
-/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头。不在本期时双击日期即可回到今天。
+/// · 按天：所选那一天 → 汇总只算这一天；趋势图＝含所选日在内最近 7 天
+/// · 按月：所选那个月 → 汇总只算这个月；趋势图＝含所选月在内最近 6 个月
+/// · 按年：所选那一年 → 汇总只算这一年；趋势图＝含所选年在内最近 5 年
+/// 趋势图固定展示、不跟手滑动；翻页只用左右箭头，按天一次走一天。不在本期时双击日期即可回到今天。
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
     @AppStorage("stats_range") private var storedRange: String = "day"
+    @AppStorage("stats_anchor") private var storedAnchor: String = ""
 
     private enum StatsRange: String, CaseIterable, Identifiable {
         case day = "按天"
@@ -36,6 +37,7 @@ struct StatsView: View {
 
     @State private var range: StatsRange = .day
     @State private var anchor: Date = Calendar.current.startOfDay(for: Date())
+    @State private var hasLoaded = false
 
     private struct Bucket: Identifiable {
         let id: Int
@@ -74,8 +76,10 @@ struct StatsView: View {
             .navigationTitle("统计")
             .navigationBarTitleDisplayMode(.large)
             .onAppear {
+                guard !hasLoaded else { return }
                 range = StatsRange.allCases.first { $0.key == storedRange } ?? .day
-                anchor = today
+                anchor = storedAnchorDate
+                hasLoaded = true
             }
         }
     }
@@ -90,8 +94,12 @@ struct StatsView: View {
         }
         .pickerStyle(.segmented)
         .onChange(of: range) { _, newValue in
+            // onAppear 恢复上次粒度时也会触发 onChange；那一轮 storedRange 已经
+            // 等于新值，不能拿它当作用户切换，否则会把恢复出来的锚点冲成今天。
+            guard newValue.key != storedRange else { return }
             storedRange = newValue.key
             anchor = today
+            storedAnchor = dateString(today)
         }
     }
 
@@ -416,6 +424,18 @@ struct StatsView: View {
 
     private var cal: Calendar { Calendar.current }
     private var today: Date { cal.startOfDay(for: Date()) }
+
+    /// 上次停留的日期。安卓/PWA 都会保留锚点，iOS 不能每次进统计页都被重置到今天。
+    private var storedAnchorDate: Date {
+        let raw = storedAnchor.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return today }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = cal
+        f.dateFormat = "yyyy-MM-dd"
+        guard let date = f.date(from: raw) else { return today }
+        return min(cal.startOfDay(for: date), today)
+    }
     private var clampedAnchor: Date { min(anchor, today) }
 
     private var atLatest: Bool {
@@ -469,26 +489,41 @@ struct StatsView: View {
     private var periodStartDate: Date { periodStart(clampedAnchor) }
     private var periodEnd: Date { max(periodStartDate, periodEndDate(clampedAnchor)) }
     private var periodDays: Int { max(1, (cal.dateComponents([.day], from: periodStartDate, to: periodEnd).day ?? 0) + 1) }
-    /// 按天翻页一次走一周：一天一天点太累，双击日期或胶囊可以直接回今天。
-    private var dayStep: Int { 7 }
+    /// 按天翻页一次只走一天，和日期标题保持一致；回到今天走双击日期。
+    private var dayStep: Int { 1 }
 
-    private var windowStart: Date {
+    /// 趋势窗口与安卓/PWA 完全同口径：7 天 / 6 个月 / 5 年。
+    /// 锚点还在「含今天的那段窗口」里时，窗口右端钉在今天，翻页只换汇总日；
+    /// 只有锚点翻出窗口后才整排跟着挪，避免每点一下箭头整张图都平移。
+    private var trendWindow: (start: Date, end: Date) {
+        let a = clampedAnchor
         switch range {
-        case .day: return cal.date(byAdding: .day, value: -29, to: clampedAnchor) ?? clampedAnchor
-        case .month: return cal.date(byAdding: .month, value: -11, to: periodStartDate) ?? periodStartDate
-        case .year: return cal.date(byAdding: .year, value: -5, to: periodStartDate) ?? periodStartDate
+        case .day:
+            let recentStart = cal.date(byAdding: .day, value: -6, to: today) ?? today
+            let end = a < recentStart ? a : today
+            let start = cal.date(byAdding: .day, value: -6, to: end) ?? end
+            return (start, end)
+        case .month:
+            let recentStart = startOfMonth(cal.date(byAdding: .month, value: -5, to: today) ?? today)
+            let endMonth = a < recentStart ? startOfMonth(a) : startOfMonth(today)
+            let start = cal.date(byAdding: .month, value: -5, to: endMonth) ?? endMonth
+            return (start, min(endOfMonth(endMonth), today))
+        case .year:
+            let recentStart = startOfYear(cal.date(byAdding: .year, value: -4, to: today) ?? today)
+            let endYear = a < recentStart ? startOfYear(a) : startOfYear(today)
+            let start = cal.date(byAdding: .year, value: -4, to: endYear) ?? endYear
+            return (start, min(endOfYear(endYear), today))
         }
     }
 
-    private var windowEnd: Date { periodEnd }
+    private var windowStart: Date { trendWindow.start }
+    private var windowEnd: Date { trendWindow.end }
 
     private var windowNote: String {
         switch range {
-        case .day: return "近 30 天"
-        case .month:
-            let months = (cal.dateComponents([.month], from: windowStart, to: windowEnd).month ?? 11) + 1
-            return "近 \(min(12, max(1, months))) 个月"
-        case .year: return "近 6 年"
+        case .day: return "近 7 天"
+        case .month: return "近 6 个月"
+        case .year: return "近 5 年"
         }
     }
 
@@ -519,6 +554,7 @@ struct StatsView: View {
         withAnimation(.easeOut(duration: 0.18)) {
             anchor = next
         }
+        storedAnchor = dateString(next)
     }
 
     private func backToToday() {
@@ -526,6 +562,7 @@ struct StatsView: View {
         withAnimation(.easeOut(duration: 0.2)) {
             anchor = today
         }
+        storedAnchor = dateString(today)
     }
 
     private var periodRecords: [LedgerRecord] {
@@ -558,20 +595,25 @@ struct StatsView: View {
         return "\(category) · \(shortDate(record.date))"
     }
 
-    private var topMemberName: String {
+    /// 最常记的成员：先比笔数，再比金额。名称和明细共用同一次选择，
+    /// 不能像旧代码那样一个按金额破平、一个只按笔数破平，否则同笔数时
+    /// 卡片会出现「张三」配「李四 3 笔」的自相矛盾。
+    private var topMemberStat: (name: String, count: Int, cents: Int)? {
         let grouped = Dictionary(grouping: periodRecords.filter { !$0.member.isEmpty }, by: \.member)
-        let top = grouped.max { lhs, rhs in
+        guard let top = grouped.max(by: { lhs, rhs in
             if lhs.value.count != rhs.value.count { return lhs.value.count < rhs.value.count }
             return lhs.value.reduce(0) { $0 + $1.amountCents } < rhs.value.reduce(0) { $0 + $1.amountCents }
-        }
-        return top?.key ?? "—"
+        }) else { return nil }
+        return (top.key, top.value.count, top.value.reduce(0) { $0 + $1.amountCents })
+    }
+
+    private var topMemberName: String {
+        topMemberStat?.name ?? "—"
     }
 
     private var topMemberDetail: String {
-        let grouped = Dictionary(grouping: periodRecords.filter { !$0.member.isEmpty }, by: \.member)
-        guard let top = grouped.max(by: { $0.value.count < $1.value.count }) else { return "还没有成员记录" }
-        let amount = top.value.reduce(0) { $0 + $1.amountCents }
-        return "\(top.value.count) 笔 · \(money(amount))"
+        guard let top = topMemberStat else { return "还没有成员记录" }
+        return "\(top.count) 笔 · \(money(top.cents))"
     }
 
     /// 趋势分桶：按天逐日、按月逐月（跨年补年份）、按年逐年，都按窗口首尾对齐。
