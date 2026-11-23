@@ -39,10 +39,12 @@ struct ContentView: View {
         .tint(AppTheme.accent)
         .task {
             RenewalReminder.configure()
+            RenewalReminder.markRead()
             await store.syncNow()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                RenewalReminder.markRead()
                 Task { await store.syncNow() }
             }
         }

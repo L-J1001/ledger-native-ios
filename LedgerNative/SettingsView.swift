@@ -303,42 +303,8 @@ struct SettingsView: View {
         return build.isEmpty ? "\(short) · 原生 SwiftUI" : "\(short) (\(build)) · 原生 SwiftUI"
     }
 
-    /// 从包内 embedded.mobileprovision 读取签名到期日。
-    /// 免签 IPA 有效期由描述文件决定，直接看系统返回的签名信息并不可靠。
-    private var provisionExpiration: Date? {
-        guard let path = Bundle.main.path(forResource: "embedded", ofType: "mobileprovision"),
-              let data = FileManager.default.contents(atPath: path) else { return nil }
-        // 描述文件外层是 CMS 签名，不能整段按 UTF-8 解码；
-        // 先定位 plist 的 key，再只解码它后面一小段。
-        let marker = Data("<key>ExpirationDate</key>".utf8)
-        guard let range = data.range(of: marker) else { return nil }
-        let tailEnd = min(data.count, range.upperBound + 220)
-        let tailData = data.subdata(in: range.upperBound..<tailEnd)
-        guard let tail = String(data: tailData, encoding: .utf8),
-              let start = tail.range(of: "<date>"),
-              let end = tail.range(of: "</date>") else { return nil }
-        let raw = String(tail[start.upperBound..<end.lowerBound])
-        let iso = ISO8601DateFormatter()
-        return iso.date(from: raw)
-    }
-
-    private var signatureExpired: Bool {
-        guard let date = provisionExpiration else { return false }
-        return date < Date()
-    }
-
-    private var signatureRemainingText: String {
-        guard let date = provisionExpiration else { return "读取不到描述文件有效期" }
-        let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()),
-                                                   to: Calendar.current.startOfDay(for: date)).day ?? 0
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy-MM-dd"
-        let expiry = f.string(from: date)
-        if days < 0 { return "已过期 · \(expiry)" }
-        if days == 0 { return "今天到期 · \(expiry)" }
-        return "剩余 \(days) 天 · \(expiry) 到期"
-    }
+    private var signatureExpired: Bool { SignatureInfo.isExpired }
+    private var signatureRemainingText: String { SignatureInfo.remainingText }
 
     private var aboutSection: some View {
         Section("关于") {
@@ -362,8 +328,20 @@ struct SettingsView: View {
                 Text(signatureRemainingText)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(signatureExpired ? AppTheme.expense : AppTheme.textSecondary)
+                    .multilineTextAlignment(.trailing)
+                    .layoutPriority(1)
             }
-            Text("这是自用 IPA。免费 Apple ID 签名 7 天有效，到期用 Sideloadly 覆盖安装即可，数据保留。")
+            Button {
+                RenewalReminder.markRead()
+            } label: {
+                HStack {
+                    Text("通知红点")
+                    Spacer()
+                    Text("清除")
+                        .foregroundStyle(AppTheme.accent)
+                }
+            }
+            Text("这是自用 IPA。免费 Apple ID 签名通常 7 天有效，实际以包内描述文件为准；到期用 Sideloadly 覆盖安装即可，数据保留。打开 App 会自动清除通知红点，也可以点上面的「清除」。")
                 .font(.system(size: 12))
                 .foregroundStyle(AppTheme.textSecondary)
         }
