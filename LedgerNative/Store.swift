@@ -177,6 +177,34 @@ final class LedgerStore: ObservableObject {
         return base.filter { seen.insert($0).inserted }
     }
 
+    /// 新记一笔时默认选中的账户：按当前账本历史使用次数取最常用，
+    /// 次数相同时取最近用过的那一个；没有历史时退回账户列表第一项。
+    /// 只影响表单预选，不会改写任何历史账目。
+    var preferredEntryAccount: String {
+        let options = accountOptions
+        guard let fallback = options.first else { return "" }
+        let bookID = writeBookID
+        var counts: [String: Int] = [:]
+        var latest: [String: Int64] = [:]
+        for record in records where record.bookUid == bookID {
+            let name = record.account.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, options.contains(name) else { continue }
+            counts[name, default: 0] += 1
+            latest[name] = max(latest[name] ?? 0, record.updatedAt)
+        }
+        var best = fallback
+        for option in options {
+            let count = counts[option] ?? 0
+            let last = latest[option] ?? 0
+            let bestCount = counts[best] ?? 0
+            let bestLast = latest[best] ?? 0
+            if count > bestCount || (count == bestCount && last > bestLast) {
+                best = option
+            }
+        }
+        return best
+    }
+
     /// 设置页/编辑器使用的统一入口；分类按收支方向区分。
     func taxonomyValues(kind: TaxonomyKind, direction: Direction = .expense) -> [String] {
         switch kind {

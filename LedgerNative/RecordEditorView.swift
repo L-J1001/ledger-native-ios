@@ -137,6 +137,10 @@ struct RecordEditorView: View {
             excludeTotal = editing.excludeTotal
         } else if editing == nil {
             splitLines = [SplitLine(category: category, member: member, amountText: "", note: "")]
+            // 新账不要停在「不选账户」：直接预选当前账本最常用账户。
+            if account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                account = store.preferredEntryAccount
+            }
             amountFocused = true
         }
         if member.isEmpty || member == "我",
