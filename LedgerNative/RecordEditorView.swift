@@ -22,7 +22,16 @@ struct RecordEditorView: View {
     @State private var errorMessage: String?
     @State private var showError = false
     @State private var savedHint = false
-    @FocusState private var amountFocused: Bool
+
+    /// 记一笔页所有可输入框共用一套焦点：金额、备注、每条明细的金额/备注。
+    /// 键盘上方的「完成」只清一个 Bool 时，备注和明细框会收不回键盘。
+    private enum Field: Hashable {
+        case amount
+        case note
+        case splitAmount(UUID)
+        case splitNote(UUID)
+    }
+    @FocusState private var focusedField: Field?
 
     init(record: LedgerRecord? = nil) {
         editing = record
@@ -88,9 +97,10 @@ struct RecordEditorView: View {
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("完成") { amountFocused = false }
+                    Button("完成") { focusedField = nil }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .alert("提示", isPresented: $showError) {
                 Button("好", role: .cancel) {}
             } message: {
@@ -121,7 +131,6 @@ struct RecordEditorView: View {
             let list = siblings.isEmpty ? [editing] : siblings
             splitLines = list.map {
                 SplitLine(category: $0.category,
-                          member: $0.member,
                           amountText: String(format: "%.2f", $0.amountYuan),
                           note: $0.note)
             }
@@ -136,12 +145,12 @@ struct RecordEditorView: View {
             account = editing.account
             excludeTotal = editing.excludeTotal
         } else if editing == nil {
-            splitLines = [SplitLine(category: category, member: member, amountText: "", note: "")]
+            splitLines = [SplitLine(category: category, amountText: "", note: "")]
             // 新账不要停在「不选账户」：直接预选当前账本最常用账户。
             if account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 account = store.preferredEntryAccount
             }
-            amountFocused = true
+            focusedField = .amount
         }
         if member.isEmpty || member == "我",
            let first = store.memberOptions.first {
@@ -160,7 +169,7 @@ struct RecordEditorView: View {
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.leading)
                     .monospacedDigit()
-                    .focused($amountFocused)
+                    .focused($focusedField, equals: .amount)
                 Spacer(minLength: 0)
             }
 
@@ -240,7 +249,6 @@ struct RecordEditorView: View {
         .onChange(of: splitEnabled) { _, enabled in
             if enabled && splitLines.isEmpty {
                 splitLines = [SplitLine(category: category,
-                                        member: member,
                                         amountText: amountText,
                                         note: note)]
             } else if !enabled {
@@ -365,21 +373,6 @@ struct RecordEditorView: View {
             ForEach($splitLines) { $line in
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
-                        Text("成员")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(AppTheme.textSecondary)
-                        Picker("成员", selection: $line.member) {
-                            ForEach(splitMembers(line.member), id: \.self) { item in
-                                Text(item).tag(item)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .tint(.primary)
-                        Spacer()
-                    }
-
-                    HStack(spacing: 8) {
                         Picker("分类", selection: $line.category) {
                             ForEach(splitCategories(line.category), id: \.self) { item in
                                 Text(item).tag(item)
@@ -392,6 +385,7 @@ struct RecordEditorView: View {
 
                         TextField("0.00", text: $line.amountText)
                             .keyboardType(.decimalPad)
+                            .focused($focusedField, equals: .splitAmount(line.id))
                             .multilineTextAlignment(.trailing)
                             .font(.system(size: 15, weight: .semibold, design: .rounded))
                             .monospacedDigit()
@@ -405,6 +399,9 @@ struct RecordEditorView: View {
 
                         Button {
                             if splitLines.count > 1 {
+                                if focusedField == .splitAmount(line.id) || focusedField == .splitNote(line.id) {
+                                    focusedField = nil
+                                }
                                 splitLines.removeAll { $0.id == line.id }
                             }
                         } label: {
@@ -421,6 +418,7 @@ struct RecordEditorView: View {
 
                     TextField("明细备注（选填）", text: $line.note)
                         .font(.system(size: 12))
+                        .focused($focusedField, equals: .splitNote(line.id))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                         .background(AppTheme.grouped)
@@ -434,7 +432,7 @@ struct RecordEditorView: View {
 
             Button {
                 let next = store.categories(for: direction)
-                splitLines.append(SplitLine(category: next.first ?? category, member: member, amountText: "", note: ""))
+                splitLines.append(SplitLine(category: next.first ?? category, amountText: "", note: ""))
             } label: {
                 Label("添加一行", systemImage: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -456,6 +454,9 @@ struct RecordEditorView: View {
                       text: splitEnabled ? $groupNote : $note, axis: .vertical)
                 .lineLimit(2...4)
                 .font(.system(size: 14))
+                .focused($focusedField, equals: .note)
+                .submitLabel(.done)
+                .onSubmit { focusedField = nil }
         }
         .cardStyle(padding: 14)
     }
@@ -512,12 +513,6 @@ struct RecordEditorView: View {
     private func splitCategories(_ current: String) -> [String] {
         var base = store.categories(for: direction)
         if !current.isEmpty, !base.contains(current) { base.insert(current, at: 0) }
-        return base
-    }
-
-    private func splitMembers(_ current: String) -> [String] {
-        var base = store.memberOptions.filter { $0 != "我" }
-        if !current.isEmpty, current != "我", !base.contains(current) { base.insert(current, at: 0) }
         return base
     }
 
@@ -614,11 +609,12 @@ struct RecordEditorView: View {
                 showError = true
                 return
             }
-            guard !line.member.isEmpty, line.member != "我" else {
-                errorMessage = "第 \(index + 1) 行请选择成员"
-                showError = true
-                return
-            }
+        }
+        let who = member.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !who.isEmpty, who != "我" else {
+            errorMessage = "请先选择成员；整笔拆分共用这一个成员"
+            showError = true
+            return
         }
         guard splitTotalCents > 0 else {
             errorMessage = "明细合计必须大于 0"
@@ -646,7 +642,7 @@ struct RecordEditorView: View {
                 amountCents: cents(from: line.amountText) ?? 0,
                 category: line.category,
                 note: line.note.trimmingCharacters(in: .whitespacesAndNewlines),
-                member: line.member.trimmingCharacters(in: .whitespacesAndNewlines),
+                member: who,
                 account: account.trimmingCharacters(in: .whitespacesAndNewlines),
                 groupNote: groupNote.trimmingCharacters(in: .whitespacesAndNewlines),
                 splitGroup: group,
@@ -661,14 +657,14 @@ struct RecordEditorView: View {
 
     private func finishSave(continueAfter: Bool) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        amountFocused = false
+        focusedField = nil
 
         if continueAfter {
             amountText = ""
             note = ""
             groupNote = ""
             category = store.categories(for: direction).first ?? "其他"
-            splitLines = [SplitLine(category: category, member: member, amountText: "", note: "")]
+            splitLines = [SplitLine(category: category, amountText: "", note: "")]
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                 savedHint = true
             }
@@ -687,7 +683,6 @@ struct RecordEditorView: View {
 private struct SplitLine: Identifiable, Equatable {
     let id = UUID()
     var category: String
-    var member: String
     var amountText: String
     var note: String
 }
