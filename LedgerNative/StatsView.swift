@@ -5,6 +5,7 @@ import Charts
 /// · 按天：所选那一天 → 汇总只算这一天；趋势图＝含所选日在内最近 7 天
 /// · 按月：所选那个月 → 汇总只算这个月；趋势图＝含所选月在内最近 6 个月
 /// · 按年：所选那一年 → 汇总只算这一年；趋势图＝含所选年在内最近 5 年
+/// · 全部：当前账本全部记录 → 累计收入/支出/净额与当前结余，不画趋势
 /// 趋势图固定展示、不跟手滑动；翻页只用左右箭头，按天一次走一天。不在本期时双击日期即可回到今天。
 struct StatsView: View {
     @EnvironmentObject private var store: LedgerStore
@@ -15,6 +16,7 @@ struct StatsView: View {
         case day = "按天"
         case month = "按月"
         case year = "按年"
+        case all = "全部"
         var id: String { rawValue }
 
         var key: String {
@@ -22,6 +24,7 @@ struct StatsView: View {
             case .day: return "day"
             case .month: return "month"
             case .year: return "year"
+            case .all: return "all"
             }
         }
 
@@ -31,6 +34,7 @@ struct StatsView: View {
             case .day: return "每天一格"
             case .month: return "每月一格"
             case .year: return "每年一格"
+            case .all: return "全部记录"
             }
         }
     }
@@ -61,9 +65,20 @@ struct StatsView: View {
                 VStack(spacing: 14) {
                     rangePicker
                     periodHeader
-                    summaryCard
+                    VStack(spacing: 6) {
+                        summaryBlock
+                        if range == .all {
+                            Text(allMetaText)
+                                .font(.system(size: 10))
+                                .foregroundStyle(AppTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
                     factsCard
-                    trendCard
+                    if range != .all {
+                        trendCard
+                    }
                     categoryCard
                     memberCard
                 }
@@ -103,27 +118,43 @@ struct StatsView: View {
         }
     }
 
+    @ViewBuilder
     private var periodHeader: some View {
-        HStack(spacing: 10) {
-            arrowButton(system: "chevron.left", enabled: true) { shift(-1) }
-
+        if range == .all {
             VStack(spacing: 3) {
-                Text(periodTitle)
+                Text("全部记录")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text(atLatest ? windowNote : "双击日期回到今天")
+                Text(allRangeNote)
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { backToToday() }
+            .padding(.vertical, 5)
+        } else {
+            HStack(spacing: 10) {
+                arrowButton(system: "chevron.left", enabled: true) { shift(-1) }
 
-            arrowButton(system: "chevron.right", enabled: !atLatest) {
-                if !atLatest { shift(1) }
+                VStack(spacing: 3) {
+                    Text(periodTitle)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    Text(atLatest ? windowNote : "双击日期回到今天")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { backToToday() }
+
+                arrowButton(system: "chevron.right", enabled: !atLatest) {
+                    if !atLatest { shift(1) }
+                }
+                .opacity(atLatest ? 0.35 : 1)
             }
-            .opacity(atLatest ? 0.35 : 1)
         }
     }
 
@@ -146,6 +177,15 @@ struct StatsView: View {
 
     /* ---------------- 卡片 ---------------- */
 
+    @ViewBuilder
+    private var summaryBlock: some View {
+        if range == .all {
+            allSummaryCard
+        } else {
+            summaryCard
+        }
+    }
+
     private var summaryCard: some View {
         HStack(spacing: 0) {
             summaryMetric(title: "收入", cents: incomeCents, color: AppTheme.income)
@@ -153,6 +193,24 @@ struct StatsView: View {
             summaryMetric(title: "支出", cents: expenseCents, color: AppTheme.expense)
             Divider().frame(height: 42)
             summaryMetric(title: "收支净额", cents: incomeCents - expenseCents, color: AppTheme.accent)
+        }
+        .cardStyle(padding: 18)
+    }
+
+    /// 全部档：四项 2×2，避免「累计净额」和「当前结余」被挤成一行看不清。
+    private var allSummaryCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                summaryMetric(title: "累计收入", cents: incomeCents, color: AppTheme.income)
+                Divider().frame(height: 42)
+                summaryMetric(title: "累计支出", cents: expenseCents, color: AppTheme.expense)
+            }
+            Divider().padding(.vertical, 12)
+            HStack(spacing: 0) {
+                summaryMetric(title: "累计净额", cents: incomeCents - expenseCents, color: AppTheme.accent)
+                Divider().frame(height: 42)
+                summaryMetric(title: "当前结余", cents: currentBalanceCents, color: AppTheme.accent)
+            }
         }
         .cardStyle(padding: 18)
     }
@@ -173,7 +231,12 @@ struct StatsView: View {
     }
 
     private var factsCard: some View {
-        let facts: [(String, String, String)] = [
+        let facts: [(String, String, String)] = range == .all ? [
+            ("记账笔数", "\(periodRecords.count) 笔", "含拆分后的明细"),
+            ("记账天数", "\(activeDayCount) 天", "跨度 \(periodDays) 天"),
+            ("最大单笔", money(maxSingleExpenseCents), maxSingleExpenseCategory),
+            ("最常记", topMemberName, topMemberDetail)
+        ] : [
             ("记账笔数", "\(periodRecords.count) 笔", "含拆分后的明细"),
             (range == .day ? "当日支出" : "日均支出", money(dailyExpenseCents),
              range == .day ? periodTitle : "按 \(periodDays) 天计"),
@@ -335,7 +398,7 @@ struct StatsView: View {
                 .font(.system(size: 16, weight: .bold, design: .rounded))
 
             if categoryPoints.isEmpty {
-                Text("这个区间还没有支出")
+                Text(range == .all ? "还没有支出" : "这个区间还没有支出")
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
                     .frame(maxWidth: .infinity, minHeight: 90)
@@ -381,7 +444,7 @@ struct StatsView: View {
             Text("成员支出")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
             if memberPoints.isEmpty {
-                Text("这个区间还没有成员支出")
+                Text(range == .all ? "还没有成员支出" : "这个区间还没有成员支出")
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.textSecondary)
                     .frame(maxWidth: .infinity, minHeight: 90)
@@ -448,6 +511,8 @@ struct StatsView: View {
                 && cal.component(.month, from: a) == cal.component(.month, from: today)
         case .year:
             return cal.component(.year, from: a) >= cal.component(.year, from: today)
+        case .all:
+            return true
         }
     }
 
@@ -472,6 +537,7 @@ struct StatsView: View {
         case .day: return cal.startOfDay(for: a)
         case .month: return startOfMonth(a)
         case .year: return startOfYear(a)
+        case .all: return allStartDate
         }
     }
 
@@ -483,6 +549,8 @@ struct StatsView: View {
             return min(endOfMonth(a), today)
         case .year:
             return min(endOfYear(a), today)
+        case .all:
+            return today
         }
     }
 
@@ -513,6 +581,8 @@ struct StatsView: View {
             let endYear = a < recentStart ? startOfYear(a) : startOfYear(today)
             let start = cal.date(byAdding: .year, value: -4, to: endYear) ?? endYear
             return (start, min(endOfYear(endYear), today))
+        case .all:
+            return (allStartDate, today)
         }
     }
 
@@ -524,6 +594,7 @@ struct StatsView: View {
         case .day: return "近 7 天"
         case .month: return "近 6 个月"
         case .year: return "近 5 年"
+        case .all: return "全部记录"
         }
     }
 
@@ -539,16 +610,20 @@ struct StatsView: View {
             return f.string(from: periodStartDate)
         case .year:
             return "\(cal.component(.year, from: periodStartDate))年"
+        case .all:
+            return "全部记录"
         }
     }
 
     private func shift(_ step: Int) {
+        if range == .all { return }
         var next = clampedAnchor
         let magnitude = range == .day ? dayStep : 1
         switch range {
         case .day: next = cal.date(byAdding: .day, value: step * magnitude, to: next) ?? next
         case .month: next = cal.date(byAdding: .month, value: step * magnitude, to: next) ?? next
         case .year: next = cal.date(byAdding: .year, value: step * magnitude, to: next) ?? next
+        case .all: return
         }
         if step > 0 && next > today { next = today }
         withAnimation(.easeOut(duration: 0.18)) {
@@ -566,11 +641,47 @@ struct StatsView: View {
     }
 
     private var periodRecords: [LedgerRecord] {
+        if range == .all {
+            return store.records.filter { $0.bookUid == store.writeBookID && !$0.excludeTotal }
+        }
         let startKey = dateString(periodStartDate)
         let endKey = dateString(periodEnd)
         return store.records.filter {
             $0.bookUid == store.writeBookID && !$0.excludeTotal && $0.date >= startKey && $0.date <= endKey
         }
+    }
+
+    /// 全部档的最早可计入日期；没有记录时就停在今天。
+    private var allStartDate: Date {
+        let keys = store.records
+            .filter { $0.bookUid == store.writeBookID && !$0.excludeTotal && !$0.date.isEmpty }
+            .map(\.date)
+        guard let first = keys.min() else { return today }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = cal
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: first) ?? today
+    }
+
+    private var allRangeNote: String {
+        let hasRows = store.records.contains { $0.bookUid == store.writeBookID && !$0.excludeTotal }
+        guard hasRows else { return "全部记录 · 暂无账目" }
+        return "自 \(dateString(allStartDate)) 起 · 全部记录"
+    }
+
+    private var activeDayCount: Int {
+        Set(periodRecords.map(\.date)).count
+    }
+
+    private var currentBalanceCents: Int {
+        (store.selectedBook?.openingCents ?? 0) + incomeCents - expenseCents
+    }
+
+    private var allMetaText: String {
+        let opening = store.selectedBook?.openingCents ?? 0
+        let avg = expenseCents / max(1, activeDayCount)
+        return "期初 \(money(opening)) · 1 本账本 · \(periodRecords.count) 笔 · \(activeDayCount) 天有记账 · 记账日均 \(money(avg))"
     }
 
     private var incomeCents: Int {
@@ -677,6 +788,8 @@ struct StatsView: View {
                 ))
                 index += 1
             }
+        case .all:
+            break
         }
         return result
     }
